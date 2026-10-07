@@ -3,7 +3,7 @@
 
   /* ---------- Config ---------- */
   const STORAGE_KEY = "bwrb.applications.v1";
-  const THEME_KEY = "bwrb.theme";
+  const OPEN_KEY = "bwrb.openMonths";
   const SEED_URL = "data/bewerbungen.csv";
 
   const STATUSES = [
@@ -208,6 +208,7 @@
     draft: null,
     draftOriginal: "",
     isNew: false,
+    openMonths: new Set((() => { try { return JSON.parse(localStorage.getItem(OPEN_KEY)) || []; } catch { return []; } })()),
   };
 
   function sortApps(apps, mode) {
@@ -358,18 +359,67 @@
       return;
     }
     const grouped = state.sort === "date-desc" || state.sort === "date-asc";
-    let html = "", lastGroup = null, i = 0;
+    if (!grouped) {
+      els.list.innerHTML = apps.map(cardHTML).join("");
+      return;
+    }
+
+    // group by month, keeping the sort order
+    const groups = new Map();
     for (const a of apps) {
-      if (grouped) {
-        const g = a.datum ? `${MONTHS[+a.datum.slice(5, 7) - 1]} ${a.datum.slice(0, 4)}` : "Ohne Datum";
-        if (g !== lastGroup) {
-          html += `<div class="group-label" style="--i:${Math.min(i, 24)}">${g}</div>`;
-          lastGroup = g;
-        }
-      }
-      html += cardHTML(a, i++);
+      const key = a.datum ? a.datum.slice(0, 7) : "none";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(a);
+    }
+    const searching = !!state.query.trim();
+    let html = `
+      <div class="list-tools">
+        <button class="text-btn" data-toggle-all>${groups.size && [...groups.keys()].every((k) => state.openMonths.has(k)) ? "Alle zuklappen" : "Alle aufklappen"}</button>
+      </div>`;
+    let gi = 0;
+    for (const [key, list] of groups) {
+      const open = searching || state.openMonths.has(key);
+      const name = key === "none" ? "Ohne Datum" : MONTHS[+key.slice(5, 7) - 1];
+      const year = key === "none" ? "" : key.slice(0, 4);
+      const by = STATUSES.map((s) => ({ ...s, n: list.filter((a) => a.status === s.id).length })).filter((s) => s.n);
+      html += `
+        <section class="month ${open ? "open" : ""}" data-month="${key}" style="--i:${gi++}">
+          <button class="month-head" aria-expanded="${open}">
+            <div class="month-cal"><b>${name.slice(0, 3)}</b><small>${year}</small></div>
+            <div class="month-info">
+              <h3>${name} ${year}</h3>
+              <div class="month-stats">${by.map((s) => `<span style="--c:${s.color}"><i></i>${s.n} ${s.label}</span>`).join("")}</div>
+              <div class="month-bar">${by.map((s) => `<span style="--c:${s.color};flex:${s.n};--i:${gi}"></span>`).join("")}</div>
+            </div>
+            <div class="month-count"><b>${list.length}</b><small>${list.length === 1 ? "Bewerbung" : "Bewerbungen"}</small></div>
+            <span class="chev"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+          </button>
+          <div class="month-body"><div class="month-inner"><div class="month-cards">
+            ${list.map(cardHTML).join("")}
+          </div></div></div>
+        </section>`;
     }
     els.list.innerHTML = html;
+  }
+
+  function saveOpenMonths() {
+    try { localStorage.setItem(OPEN_KEY, JSON.stringify([...state.openMonths])); } catch {}
+  }
+
+  function toggleMonth(section) {
+    const key = section.dataset.month;
+    const open = !section.classList.contains("open");
+    section.classList.toggle("open", open);
+    section.querySelector(".month-head").setAttribute("aria-expanded", open);
+    open ? state.openMonths.add(key) : state.openMonths.delete(key);
+    saveOpenMonths();
+    const allOpen = [...els.list.querySelectorAll(".month")].every((m) => m.classList.contains("open"));
+    const tg = els.list.querySelector("[data-toggle-all]");
+    if (tg) tg.textContent = allOpen ? "Alle zuklappen" : "Alle aufklappen";
+    if (open) setTimeout(() => {
+      const r = section.getBoundingClientRect();
+      if (r.bottom > innerHeight) section.scrollIntoView({ behavior: "smooth", block: r.height > innerHeight ? "start" : "nearest" });
+    }, 300);
   }
 
   function render({ transition = false } = {}) {
@@ -536,6 +586,8 @@
     if (idx >= 0) state.apps[idx] = state.draft; else state.apps.unshift(state.draft);
     const name = state.draft.firma, wasNew = state.isNew;
     persist();
+    state.openMonths.add(state.draft.datum ? state.draft.datum.slice(0, 7) : "none");
+    saveOpenMonths();
     closeDrawer(true);
     render({ transition: true });
     toast(wasNew ? `${name} hinzugefügt` : `${name} gespeichert`);
@@ -619,22 +671,6 @@
     };
   }
 
-  /* ---------- Theme ---------- */
-  function applyTheme(t) {
-    if (t) document.documentElement.dataset.theme = t;
-    else delete document.documentElement.dataset.theme;
-  }
-  function toggleTheme() {
-    const isDark = document.documentElement.dataset.theme
-      ? document.documentElement.dataset.theme === "dark"
-      : matchMedia("(prefers-color-scheme: dark)").matches;
-    const next = isDark ? "light" : "dark";
-    const run = () => applyTheme(next);
-    document.startViewTransition ? document.startViewTransition(run) : run();
-    try { localStorage.setItem(THEME_KEY, next); } catch {}
-  }
-  try { applyTheme(localStorage.getItem(THEME_KEY)); } catch {}
-
   /* ---------- Menu ---------- */
   const menu = $("#menu"), menuBtn = $("#menuBtn");
   const closeMenu = () => menu.classList.remove("open");
@@ -651,7 +687,6 @@
         download(`bewerbungen-backup-${stamp}.json`, JSON.stringify(state.apps, null, 2), "application/json");
         toast("Backup gespeichert"); break;
       case "import": $("#fileInput").click(); break;
-      case "theme": toggleTheme(); break;
       case "reset":
         if (confirm("Wirklich ALLE Bewerbungen löschen? Tipp: vorher ein Backup speichern.")) {
           state.apps = []; persist(); render({ transition: true }); toast("Alle Daten gelöscht");
@@ -690,6 +725,15 @@
   els.sort.addEventListener("change", () => { state.sort = els.sort.value; render({ transition: true }); });
 
   els.list.addEventListener("click", (e) => {
+    const head = e.target.closest(".month-head");
+    if (head) return toggleMonth(head.closest(".month"));
+    if (e.target.closest("[data-toggle-all]")) {
+      const months = [...els.list.querySelectorAll(".month")];
+      const openAll = !months.every((m) => m.classList.contains("open"));
+      months.forEach((m) => (openAll ? state.openMonths.add(m.dataset.month) : state.openMonths.delete(m.dataset.month)));
+      saveOpenMonths();
+      return render({ transition: true });
+    }
     const card = e.target.closest(".card");
     if (!card) return;
     const app = state.apps.find((a) => a.id === card.dataset.id);
