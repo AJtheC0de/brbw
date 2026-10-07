@@ -496,7 +496,7 @@ textarea { height: auto; padding: 10px 12px; resize: vertical; min-height: 64px;
 @media (hover: none) { .search kbd { display: none; } }
 
 /* ---------- Verlauf (stepper) ---------- */
-.stepper { display: grid; grid-template-columns: repeat(5, 1fr); padding: 4px 0 2px; }
+.stepper { display: grid; grid-template-columns: repeat(4, 1fr); padding: 4px 0 2px; }
 .step {
   position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px;
   border: 0; background: none; padding: 0 2px; text-align: center; min-width: 0;

@@ -21,7 +21,6 @@
   // Verlauf (progress) – how far the application got
   const PHASES = [
     { id: "beworben", label: "Beworben" },
-    { id: "bestaetigt", label: "Bestätigt" },
     { id: "gespraech1", label: "1. Gespräch" },
     { id: "gespraech2", label: "2. Gespräch" },
     { id: "final", label: "Finale Runde" },
@@ -122,7 +121,6 @@
     if (t.includes("final")) return "final";
     if (t.includes("2.")) return "gespraech2";
     if (t.includes("gespräch") || t.includes("interview") || t.includes("einladung")) return "gespraech1";
-    if (t.includes("bestätig")) return "bestaetigt";
     return "";
   }
 
@@ -188,7 +186,7 @@
         const t = status === "absage" ? "absage" : parsed.phase ? "einladung" : "sonstiges";
         links.push({ id: uid(), type: t, url });
       });
-      const phase = phaseFromText(get(iPhase)) || parsed.phase || (links.some((l) => l.type === "bestaetigung") ? "bestaetigt" : "beworben");
+      const phase = phaseFromText(get(iPhase)) || parsed.phase || "beworben";
       const notes = [];
       if (get(iNote)) {
         get(iNote).split(" | ").forEach((t) => t.trim() && notes.push({ id: uid(), text: t.trim(), date: datum || todayISO() }));
@@ -632,8 +630,6 @@
     } else if (linkType.value === "einladung" && idx < INTERVIEW_IDX) {
       if (state.draft.status === "keine") { state.draft.status = "offen"; renderStatusPicker(); }
       setPhase("gespraech1");
-    } else if (linkType.value === "bestaetigung" && idx < 1) {
-      setPhase("bestaetigt");
     }
     linkUrl.value = "";
     renderLinks();
@@ -740,7 +736,7 @@
     const parsed = parseStatusText(a.status);
     const links0 = Array.isArray(a.links) ? a.links : [];
     let phase = PHASE[a.phase] ? a.phase : parsed.phase
-      || (links0.some((l) => l && l.type === "einladung") ? "gespraech1" : links0.some((l) => l && l.type === "bestaetigung") ? "bestaetigt" : "beworben");
+      || (links0.some((l) => l && l.type === "einladung") ? "gespraech1" : "beworben");
     const phaseDates = {};
     if (a.phaseDates && typeof a.phaseDates === "object") {
       for (const [k, v] of Object.entries(a.phaseDates)) if (PHASE[k] && parseDate(v)) phaseDates[k] = parseDate(v);
