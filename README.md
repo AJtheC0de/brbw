@@ -3,7 +3,9 @@
 Statische Web-App (HTML/CSS/JS) zum Tracken von Bewerbungen – gehostet über GitHub Pages.
 
 - Bewerbungen erfassen, bearbeiten, löschen (mit Rückgängig)
-- Status: Offen, Einladung, Interview, Angebot, Absage, Keine Antwort
+- Verlauf: Beworben → Bestätigt → 1. Gespräch → 2. Gespräch → Finale Runde (mit Datum)
+- Ergebnis: Offen, Angebot, Absage, Keine Antwort, Zurückgezogen
+- Monatsübersicht zum Aufklappen
 - Links zu Bestätigungen, Einladungen, Absagen, Inseraten
 - Notizen mit Datum (Timeline)
 - Suche, Filter, Sortierung, Statistik

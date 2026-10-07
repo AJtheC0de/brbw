@@ -8,15 +8,28 @@
   const SEED_FIX_VERSION = "2";
   const SEED_URL = "data/bewerbungen.csv";
 
+  // Ergebnis (outcome) – how it ended / where it stands
   const STATUSES = [
     { id: "offen", label: "Offen", color: "var(--s-offen)" },
-    { id: "einladung", label: "Einladung", color: "var(--s-einladung)" },
-    { id: "interview", label: "Interview", color: "var(--s-interview)" },
     { id: "angebot", label: "Angebot", color: "var(--s-angebot)" },
     { id: "absage", label: "Absage", color: "var(--s-absage)" },
     { id: "keine", label: "Keine Antwort", color: "var(--s-keine)" },
+    { id: "zurueckgezogen", label: "Zurückgezogen", color: "var(--s-zurueck)" },
   ];
   const STATUS = Object.fromEntries(STATUSES.map((s) => [s.id, s]));
+
+  // Verlauf (progress) – how far the application got
+  const PHASES = [
+    { id: "beworben", label: "Beworben" },
+    { id: "bestaetigt", label: "Bestätigt" },
+    { id: "gespraech1", label: "1. Gespräch" },
+    { id: "gespraech2", label: "2. Gespräch" },
+    { id: "final", label: "Finale Runde" },
+  ];
+  const PHASE = Object.fromEntries(PHASES.map((p) => [p.id, p]));
+  const phaseIdx = (id) => Math.max(0, PHASES.findIndex((p) => p.id === id));
+  const INTERVIEW_IDX = phaseIdx("gespraech1");
+  const hadInterview = (a) => phaseIdx(a.phase) >= INTERVIEW_IDX;
 
   const LINK_TYPES = [
     { id: "bestaetigung", label: "Bestätigung", color: "var(--s-offen)" },
@@ -90,14 +103,27 @@
     const w = String(name || "?").trim().split(/\s+/);
     return ((w[0]?.[0] || "?") + (w[1]?.[0] || "")).toUpperCase();
   }
-  function statusFromText(t) {
+  // Maps free text (CSV "Status" column or legacy values) to { status, phase }
+  function parseStatusText(t) {
     t = String(t || "").toLowerCase().trim();
-    if (t.startsWith("absage")) return "absage";
-    if (t.includes("keine")) return "keine";
-    if (t.includes("einladung")) return "einladung";
-    if (t.includes("interview") || t.includes("gespräch")) return "interview";
-    if (t.includes("angebot") || t.includes("zusage")) return "angebot";
-    return "offen";
+    if (STATUS[t]) return { status: t, phase: null };
+    if (t.startsWith("absage")) return { status: "absage", phase: null };
+    if (t.includes("keine")) return { status: "keine", phase: null };
+    if (t.includes("zurück")) return { status: "zurueckgezogen", phase: null };
+    if (t.includes("angebot") || t.includes("zusage")) return { status: "angebot", phase: "gespraech1" };
+    if (t.includes("einladung") || t.includes("interview") || t.includes("gespräch")) return { status: "offen", phase: "gespraech1" };
+    return { status: "offen", phase: null };
+  }
+  function phaseFromText(t) {
+    t = String(t || "").toLowerCase().trim();
+    if (PHASE[t]) return t;
+    const hit = PHASES.find((p) => p.label.toLowerCase() === t);
+    if (hit) return hit.id;
+    if (t.includes("final")) return "final";
+    if (t.includes("2.")) return "gespraech2";
+    if (t.includes("gespräch") || t.includes("interview") || t.includes("einladung")) return "gespraech1";
+    if (t.includes("bestätig")) return "bestaetigt";
+    return "";
   }
 
   /* ---------- Storage ---------- */
@@ -145,6 +171,7 @@
     const iFirma = col("firma", "unternehmen", "company");
     const iStelle = col("stelle", "position", "job");
     const iStatus = col("status");
+    const iPhase = col("verlauf", "phase");
     const iAbsage = col("absage am", "entscheid");
     const iProofIn = head.findIndex((h) => h.includes("nachweis eingang") || h.includes("bestätigung"));
     const iProofOut = head.findIndex((h) => h.includes("nachweis outcome") || h.includes("outcome"));
@@ -152,14 +179,16 @@
 
     return rows.slice(1).map((r) => {
       const get = (i) => (i >= 0 ? (r[i] || "").trim() : "");
-      const status = statusFromText(get(iStatus));
+      const parsed = parseStatusText(get(iStatus));
+      const status = parsed.status;
       const datum = parseDate(get(iDate));
       const links = [];
-      if (get(iProofIn)) links.push({ id: uid(), type: "bestaetigung", url: get(iProofIn) });
-      if (get(iProofOut)) {
-        const t = status === "absage" ? "absage" : status === "einladung" || status === "interview" ? "einladung" : "sonstiges";
-        links.push({ id: uid(), type: t, url: get(iProofOut) });
-      }
+      get(iProofIn).split(/\s+/).filter(Boolean).forEach((url) => links.push({ id: uid(), type: "bestaetigung", url }));
+      get(iProofOut).split(/\s+/).filter(Boolean).forEach((url) => {
+        const t = status === "absage" ? "absage" : parsed.phase ? "einladung" : "sonstiges";
+        links.push({ id: uid(), type: t, url });
+      });
+      const phase = phaseFromText(get(iPhase)) || parsed.phase || (links.some((l) => l.type === "bestaetigung") ? "bestaetigt" : "beworben");
       const notes = [];
       if (get(iNote)) {
         get(iNote).split(" | ").forEach((t) => t.trim() && notes.push({ id: uid(), text: t.trim(), date: datum || todayISO() }));
@@ -170,6 +199,8 @@
         stelle: get(iStelle),
         datum,
         status,
+        phase,
+        phaseDates: {},
         absageAm: parseDate(get(iAbsage)),
         links, notes,
         updated: Date.now(),
@@ -179,14 +210,14 @@
 
   function appsToCSV(apps) {
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const header = ["Monat", "Bewerbung / Eingang", "Firma", "Stelle", "Status", "Absage am", "Nachweis Eingang", "Nachweis Outcome", "Bemerkung"];
+    const header = ["Monat", "Bewerbung / Eingang", "Firma", "Stelle", "Status", "Verlauf", "Absage am", "Nachweis Eingang", "Nachweis Outcome", "Bemerkung"];
     const lines = [header.map(q).join(";")];
     for (const a of sortApps(apps, "date-desc")) {
       const proofIn = a.links.filter((l) => l.type === "bestaetigung").map((l) => l.url).join(" ");
       const proofOut = a.links.filter((l) => l.type !== "bestaetigung").map((l) => l.url).join(" ");
       const month = a.datum ? MONTHS[+a.datum.slice(5, 7) - 1] : "";
       lines.push([
-        month, fmtDate(a.datum), a.firma, a.stelle, STATUS[a.status]?.label || "",
+        month, fmtDate(a.datum), a.firma, a.stelle, STATUS[a.status]?.label || "", PHASE[a.phase]?.label || "",
         fmtDate(a.absageAm), proofIn, proofOut, a.notes.map((n) => n.text.replace(/\s*\n\s*/g, " ")).join(" | "),
       ].map(q).join(";"));
     }
@@ -226,9 +257,10 @@
   function visibleApps() {
     const q = state.query.trim().toLowerCase();
     return sortApps(state.apps, state.sort).filter((a) => {
-      if (state.filter !== "alle" && a.status !== state.filter) return false;
+      if (state.filter === "gespraech") { if (!hadInterview(a)) return false; }
+      else if (state.filter !== "alle" && a.status !== state.filter) return false;
       if (!q) return true;
-      return [a.firma, a.stelle, STATUS[a.status]?.label, ...a.notes.map((n) => n.text)]
+      return [a.firma, a.stelle, STATUS[a.status]?.label, PHASE[a.phase]?.label, ...a.notes.map((n) => n.text)]
         .some((v) => String(v || "").toLowerCase().includes(q));
     });
   }
@@ -259,15 +291,17 @@
     const total = state.apps.length;
     const by = Object.fromEntries(STATUSES.map((s) => [s.id, 0]));
     state.apps.forEach((a) => by[a.status]++);
-    const positive = by.einladung + by.interview + by.angebot;
-    const answered = total - by.offen - by.keine;
+    const talks = state.apps.filter(hadInterview);
+    const talksRejected = talks.filter((a) => a.status === "absage").length;
+    const answered = state.apps.filter((a) => (a.status !== "offen" && a.status !== "keine") || hadInterview(a)).length;
     const rate = total ? Math.round((answered / total) * 100) : 0;
+    const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
 
     const tiles = [
       { key: "total", label: "Total", value: total, sub: `${rate}% mit Antwort`, c: "var(--accent)" },
       { key: "offen", label: "Offen", value: by.offen, sub: "warten auf Antwort", c: STATUS.offen.color },
-      { key: "pos", label: "Einladungen", value: positive, sub: by.angebot ? `${by.angebot} Angebot${by.angebot > 1 ? "e" : ""}` : "Gespräche & Angebote", c: STATUS.einladung.color },
-      { key: "absage", label: "Absagen", value: by.absage, sub: total ? `${Math.round((by.absage / total) * 100)}% aller Bewerbungen` : "–", c: STATUS.absage.color },
+      { key: "pos", label: "Gespräche", value: talks.length, sub: by.angebot ? `${pct(talks.length)}% eingeladen · ${by.angebot} Angebot${by.angebot > 1 ? "e" : ""}` : `${pct(talks.length)}% Einladungsquote`, c: "var(--s-phase)" },
+      { key: "absage", label: "Absagen", value: by.absage, sub: talksRejected ? `davon ${talksRejected} nach Gespräch` : `${pct(by.absage)}% aller Bewerbungen`, c: STATUS.absage.color },
       { key: "keine", label: "Keine Antwort", value: by.keine, sub: "Ghosting", c: STATUS.keine.color },
     ];
 
@@ -307,12 +341,19 @@
   function renderFilters() {
     const counts = { alle: state.apps.length };
     STATUSES.forEach((s) => (counts[s.id] = state.apps.filter((a) => a.status === s.id).length));
-    const opts = [{ id: "alle", label: "Alle" }, ...STATUSES];
+    counts.gespraech = state.apps.filter(hadInterview).length;
+    const opts = [{ id: "alle", label: "Alle" }, { id: "gespraech", label: "Mit Gespräch", color: "var(--s-phase)" }, ...STATUSES];
     els.filters.innerHTML = opts.map((o) => `
       <button class="chip ${state.filter === o.id ? "active" : ""}" data-filter="${o.id}" role="tab"
         aria-selected="${state.filter === o.id}" ${o.color ? `style="--c:${o.color}"` : ""}>
         ${o.color ? "<i></i>" : ""}${o.label}<b>${counts[o.id]}</b>
       </button>`).join("");
+  }
+
+  function phaseTagHTML(a) {
+    const idx = phaseIdx(a.phase);
+    const dots = PHASES.map((p, i) => `<i class="${i < idx ? "on" : i === idx ? "on end" : ""}"></i>`).join("");
+    return `<span class="phase-tag ${idx >= INTERVIEW_IDX ? "hot" : ""}" title="Verlauf: ${PHASE[a.phase]?.label || ""}"><span class="phase-dots">${dots}</span>${PHASE[a.phase]?.label || ""}</span>`;
   }
 
   function cardHTML(a, i) {
@@ -329,6 +370,7 @@
             ${a.datum ? `<span>${ICONS.calendar}${fmtDateLong(a.datum)}</span>` : ""}
             ${a.links.length ? `<span>${ICONS.link}${a.links.length}</span>` : ""}
             ${a.notes.length ? `<span>${ICONS.note}${a.notes.length}</span>` : ""}
+            ${phaseTagHTML(a)}
           </div>
         </div>
         <div class="card-side">
@@ -390,7 +432,7 @@
             <div class="month-cal"><b>${name.slice(0, 3)}</b><small>${year}</small></div>
             <div class="month-info">
               <h3>${name} ${year}</h3>
-              <div class="month-stats">${by.map((s) => `<span style="--c:${s.color}"><i></i>${s.n} ${s.label}</span>`).join("")}</div>
+              <div class="month-stats">${by.map((s) => `<span style="--c:${s.color}"><i></i>${s.n} ${s.label}</span>`).join("")}${(() => { const n = list.filter(hadInterview).length; return n ? `<span class="talks" style="--c:var(--s-phase)"><i></i>${n} mit Gespräch</span>` : ""; })()}</div>
               <div class="month-bar">${by.map((s) => `<span style="--c:${s.color};flex:${s.n};--i:${gi}"></span>`).join("")}</div>
             </div>
             <div class="month-count"><b>${list.length}</b><small>${list.length === 1 ? "Bewerbung" : "Bewerbungen"}</small></div>
@@ -433,7 +475,7 @@
 
   /* ---------- Drawer ---------- */
   const drawer = $("#drawer"), overlay = $("#overlay"), form = $("#form");
-  const statusPicker = $("#statusPicker"), linksList = $("#linksList"), notesList = $("#notesList");
+  const statusPicker = $("#statusPicker"), phaseStepper = $("#phaseStepper"), phaseDateWrap = $("#phaseDateWrap"), phaseDate = $("#phaseDate"), linksList = $("#linksList"), notesList = $("#notesList");
   const linkType = $("#linkType"), linkUrl = $("#linkUrl"), noteText = $("#noteText");
   let lastFocus = null;
 
@@ -442,7 +484,7 @@
   function openDrawer(app) {
     state.isNew = !app;
     state.draft = app ? structuredClone(app) : {
-      id: uid(), firma: "", stelle: "", datum: todayISO(), status: "offen", absageAm: "", links: [], notes: [], updated: Date.now(),
+      id: uid(), firma: "", stelle: "", datum: todayISO(), status: "offen", phase: "beworben", phaseDates: {}, absageAm: "", links: [], notes: [], updated: Date.now(),
     };
     state.draftOriginal = JSON.stringify(state.draft);
     lastFocus = document.activeElement;
@@ -456,7 +498,7 @@
     linkType.value = "bestaetigung";
     $("#deleteBtn").hidden = state.isNew;
 
-    renderDrawerHead(); renderStatusPicker(); renderLinks(); renderNotes();
+    renderDrawerHead(); renderStatusPicker(); renderPhase(); renderLinks(); renderNotes();
 
     overlay.hidden = false;
     drawer.setAttribute("aria-hidden", "false");
@@ -501,6 +543,38 @@
     $("#drawerMeta").textContent = state.isNew
       ? "Erfasse die Eckdaten deiner Bewerbung"
       : [form.stelle.value.trim(), d.datum && `beworben ${relDays(daysSince(d.datum))}`].filter(Boolean).join(" · ");
+  }
+
+  function renderPhase() {
+    const d = state.draft;
+    const idx = phaseIdx(d.phase);
+    const endColor = d.status === "offen" ? "var(--s-phase)" : STATUS[d.status].color;
+    phaseStepper.style.setProperty("--end", endColor);
+    phaseStepper.innerHTML = PHASES.map((p, i) => {
+      const date = i === 0 ? form.datum.value : d.phaseDates[p.id];
+      const cls = i < idx ? "done" : i === idx ? "done current" : "";
+      return `
+        <button type="button" class="step ${cls}" data-phase="${p.id}" style="--i:${i}" aria-pressed="${i === idx}">
+          <span class="step-dot">${i < idx || (i === idx && d.status !== "offen") ? (i === idx && d.status === "absage" ? ICONS.x : ICONS.check) : i + 1}</span>
+          <span class="step-label">${p.label}</span>
+          <span class="step-date">${i <= idx && date ? fmtDate(date).slice(0, 6) : ""}</span>
+        </button>`;
+    }).join("");
+    phaseDateWrap.hidden = idx === 0;
+    if (idx > 0) {
+      $("#phaseDateLabel").textContent = `Datum „${PHASE[d.phase].label}“`;
+      phaseDate.value = d.phaseDates[d.phase] || "";
+    }
+  }
+
+  function setPhase(id) {
+    const d = state.draft;
+    d.phase = id;
+    const idx = phaseIdx(id);
+    // keep dates of reached steps, drop the ones beyond
+    PHASES.forEach((p, i) => { if (i > idx) delete d.phaseDates[p.id]; });
+    if (idx > 0 && !d.phaseDates[id]) d.phaseDates[id] = todayISO();
+    renderPhase();
   }
 
   function renderStatusPicker() {
@@ -549,14 +623,17 @@
     const url = linkUrl.value.trim();
     if (!url) { linkUrl.focus(); return false; }
     state.draft.links.push({ id: uid(), type: linkType.value, url });
-    // auto-advance status when a link implies it
+    // auto-advance Verlauf / Ergebnis when a link implies it
+    const idx = phaseIdx(state.draft.phase);
     if (linkType.value === "absage" && state.draft.status !== "absage") {
       state.draft.status = "absage";
       if (!form.absageAm.value) form.absageAm.value = todayISO();
-      renderStatusPicker();
-    } else if (linkType.value === "einladung" && ["offen", "keine"].includes(state.draft.status)) {
-      state.draft.status = "einladung";
-      renderStatusPicker();
+      renderStatusPicker(); renderPhase();
+    } else if (linkType.value === "einladung" && idx < INTERVIEW_IDX) {
+      if (state.draft.status === "keine") { state.draft.status = "offen"; renderStatusPicker(); }
+      setPhase("gespraech1");
+    } else if (linkType.value === "bestaetigung" && idx < 1) {
+      setPhase("bestaetigt");
     }
     linkUrl.value = "";
     renderLinks();
@@ -660,12 +737,22 @@
   }
 
   function normalize(a) {
+    const parsed = parseStatusText(a.status);
+    const links0 = Array.isArray(a.links) ? a.links : [];
+    let phase = PHASE[a.phase] ? a.phase : parsed.phase
+      || (links0.some((l) => l && l.type === "einladung") ? "gespraech1" : links0.some((l) => l && l.type === "bestaetigung") ? "bestaetigt" : "beworben");
+    const phaseDates = {};
+    if (a.phaseDates && typeof a.phaseDates === "object") {
+      for (const [k, v] of Object.entries(a.phaseDates)) if (PHASE[k] && parseDate(v)) phaseDates[k] = parseDate(v);
+    }
     return {
       id: a.id || uid(),
       firma: String(a.firma || ""),
       stelle: String(a.stelle || ""),
       datum: parseDate(a.datum),
-      status: STATUS[a.status] ? a.status : statusFromText(a.status),
+      status: parsed.status,
+      phase,
+      phaseDates,
       absageAm: parseDate(a.absageAm),
       links: Array.isArray(a.links) ? a.links.filter((l) => l && l.url).map((l) => ({ id: l.id || uid(), type: LINK_TYPE[l.type] ? l.type : "sonstiges", url: String(l.url) })) : [],
       notes: Array.isArray(a.notes) ? a.notes.filter((n) => n && n.text).map((n) => ({ id: n.id || uid(), text: String(n.text), date: parseDate(n.date) || todayISO() })) : [],
@@ -748,10 +835,12 @@
     const st = e.target.closest("[data-status]");
     if (st) {
       state.draft.status = st.dataset.status;
-      if (st.dataset.status === "absage" && !form.absageAm.value) form.absageAm.value = todayISO();
-      renderStatusPicker();
+      if (["absage", "angebot"].includes(st.dataset.status) && !form.absageAm.value) form.absageAm.value = todayISO();
+      renderStatusPicker(); renderPhase();
       return;
     }
+    const ph = e.target.closest("[data-phase]");
+    if (ph) return setPhase(ph.dataset.phase);
     const rl = e.target.closest("[data-remove-link]");
     if (rl) {
       state.draft.links = state.draft.links.filter((l) => l.id !== rl.dataset.removeLink);
@@ -763,6 +852,12 @@
       return renderNotes();
     }
   });
+  phaseDate.addEventListener("change", () => {
+    if (phaseDate.value) state.draft.phaseDates[state.draft.phase] = phaseDate.value;
+    else delete state.draft.phaseDates[state.draft.phase];
+    renderPhase();
+  });
+  form.datum.addEventListener("change", renderPhase);
   form.firma.addEventListener("input", renderDrawerHead);
   form.stelle.addEventListener("input", renderDrawerHead);
   $("#addLinkBtn").addEventListener("click", addLink);
@@ -814,6 +909,7 @@
     const saved = load();
     if (saved) {
       state.apps = saved.map(normalize);
+      persist(); // store migrated format (Verlauf / Ergebnis)
       await applySeedDateFixes();
     } else {
       try {

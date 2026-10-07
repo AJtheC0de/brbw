@@ -23,6 +23,8 @@
   --s-angebot: #10b981;
   --s-absage: #f43f5e;
   --s-keine: #94a3b8;
+  --s-zurueck: #64748b;
+  --s-phase: #8b5cf6;
 
   --radius: 14px;
   --radius-sm: 10px;
@@ -374,6 +376,7 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 .drawer.open .drawer-body > *:nth-child(2) { animation-delay: 60ms; }
 .drawer.open .drawer-body > *:nth-child(3) { animation-delay: 120ms; }
 .drawer.open .drawer-body > *:nth-child(4) { animation-delay: 180ms; }
+.drawer.open .drawer-body > *:nth-child(5) { animation-delay: 240ms; }
 .drawer-foot {
   display: flex; align-items: center; gap: 8px; padding: 14px 20px;
   border-top: 1px solid var(--border); background: var(--bg-elev);
@@ -491,3 +494,57 @@ textarea { height: auto; padding: 10px 12px; resize: vertical; min-height: 64px;
   .toolbar #sort { flex: 1 1 100%; }
 }
 @media (hover: none) { .search kbd { display: none; } }
+
+/* ---------- Verlauf (stepper) ---------- */
+.stepper { display: grid; grid-template-columns: repeat(5, 1fr); padding: 4px 0 2px; }
+.step {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  border: 0; background: none; padding: 0 2px; text-align: center; min-width: 0;
+}
+.step::before, .step::after {
+  content: ""; position: absolute; top: 15px; right: calc(50% + 18px); width: calc(100% - 36px); height: 2px; border-radius: 2px;
+}
+.step::before { background: var(--border-strong); }
+.step::after {
+  background: var(--s-phase); transform: scaleX(0); transform-origin: left;
+  transition: transform .45s var(--ease); transition-delay: calc(var(--i) * 70ms);
+}
+.step:first-child::before, .step:first-child::after { display: none; }
+.step.done::after { transform: scaleX(1); }
+.step-dot {
+  position: relative; z-index: 1; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12.5px; font-weight: 700; color: var(--text-3);
+  background: var(--bg-elev); border: 2px solid var(--border-strong);
+  transition: background .35s var(--ease), border-color .35s, color .35s, transform .35s var(--spring), box-shadow .35s;
+  transition-delay: calc(var(--i) * 70ms);
+}
+.step-dot svg { width: 15px; height: 15px; stroke-width: 2.6; }
+.step:hover .step-dot { border-color: var(--s-phase); color: var(--s-phase); }
+.step.done .step-dot { background: var(--s-phase); border-color: var(--s-phase); color: #fff; }
+.step.current .step-dot {
+  background: var(--end); border-color: var(--end); color: #fff; transform: scale(1.12);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--end) 18%, transparent);
+}
+.step-label { font-size: 12px; font-weight: 600; color: var(--text-3); line-height: 1.25; transition: color .3s; }
+.step.done .step-label { color: var(--text-2); }
+.step.current .step-label { color: var(--text); }
+.step-date { font-size: 11px; color: var(--text-3); min-height: 14px; font-variant-numeric: tabular-nums; }
+.inline-date {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px;
+  padding: 8px 8px 8px 12px; border-radius: 11px; background: var(--bg-soft); border: 1px solid var(--border);
+  font-size: 12.5px; font-weight: 600; color: var(--text-2); animation: pop .35s var(--spring) both;
+}
+.inline-date input {
+  height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-elev); outline: none;
+}
+.inline-date input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+@media (max-width: 480px) { .step-label { font-size: 11px; } .step-dot { width: 28px; height: 28px; } .step::before, .step::after { top: 13px; } }
+
+/* Verlauf on cards */
+.phase-tag { gap: 6px !important; }
+.phase-tag.hot { color: var(--s-phase); font-weight: 600; }
+.phase-dots { display: inline-flex; gap: 3px; }
+.phase-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--border-strong); }
+.phase-dots i.on { background: color-mix(in srgb, var(--s-phase) 55%, transparent); }
+.phase-dots i.end { background: var(--c); box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 22%, transparent); }
+.month-stats .talks { color: var(--s-phase); font-weight: 600; }

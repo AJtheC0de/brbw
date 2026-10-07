@@ -101,13 +101,28 @@
             <input name="datum" type="date">
           </label>
           <label class="field">
-            <span>Absage / Entscheid am</span>
+            <span>Entscheid am</span>
             <input name="absageAm" type="date">
           </label>
         </div>
 
         <div class="block">
-          <div class="block-head"><h3>Status</h3></div>
+          <div class="block-head">
+            <h3>Verlauf</h3>
+            <span class="muted small">Wie weit bist du gekommen?</span>
+          </div>
+          <div class="stepper" id="phaseStepper"></div>
+          <label class="inline-date" id="phaseDateWrap" hidden>
+            <span id="phaseDateLabel">Datum</span>
+            <input type="date" id="phaseDate">
+          </label>
+        </div>
+
+        <div class="block">
+          <div class="block-head">
+            <h3>Ergebnis</h3>
+            <span class="muted small">Wie ist es ausgegangen?</span>
+          </div>
           <div class="status-picker" id="statusPicker"></div>
         </div>
 
