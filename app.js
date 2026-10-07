@@ -4,6 +4,8 @@
   /* ---------- Config ---------- */
   const STORAGE_KEY = "bwrb.applications.v1";
   const OPEN_KEY = "bwrb.openMonths";
+  const SEED_FIX_KEY = "bwrb.seedFix";
+  const SEED_FIX_VERSION = "2";
   const SEED_URL = "data/bewerbungen.csv";
 
   const STATUSES = [
@@ -787,16 +789,39 @@
   });
 
   /* ---------- Boot ---------- */
+  // One-time: take over corrected dates from the seed CSV for entries loaded from an older version of it
+  async function applySeedDateFixes() {
+    try {
+      if (localStorage.getItem(SEED_FIX_KEY) === SEED_FIX_VERSION) return;
+      const res = await fetch(SEED_URL, { cache: "no-store" });
+      if (!res.ok) return;
+      const key = (a) => `${a.firma.toLowerCase()}|${a.stelle.toLowerCase()}`;
+      const seed = new Map(appsFromCSV(await res.text()).map((a) => [key(a), a]));
+      let fixed = 0;
+      for (const a of state.apps) {
+        const s = seed.get(key(a));
+        // only same day and year with a different month – a typo fix, not a user edit
+        if (s && s.datum && a.datum && a.datum !== s.datum && a.datum.slice(8) === s.datum.slice(8) && a.datum.slice(0, 4) === s.datum.slice(0, 4)) {
+          a.datum = s.datum; fixed++;
+        }
+      }
+      if (fixed) { persist(); setTimeout(() => toast(`${fixed} Daten korrigiert`), 600); }
+      localStorage.setItem(SEED_FIX_KEY, SEED_FIX_VERSION);
+    } catch { /* ignore */ }
+  }
+
   async function boot() {
     const saved = load();
     if (saved) {
       state.apps = saved.map(normalize);
+      await applySeedDateFixes();
     } else {
       try {
         const res = await fetch(SEED_URL, { cache: "no-store" });
         if (res.ok) {
           state.apps = appsFromCSV(await res.text());
           persist();
+          try { localStorage.setItem(SEED_FIX_KEY, SEED_FIX_VERSION); } catch {}
           if (state.apps.length) setTimeout(() => toast(`${state.apps.length} Bewerbungen aus CSV geladen`), 600);
         }
       } catch { /* opened via file:// – start empty, user can import */ }
