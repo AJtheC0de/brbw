@@ -103,6 +103,7 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 
 /* ---------- Topbar ---------- */
 .topbar {
+  position: relative; z-index: 100;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   margin-bottom: 28px;
   animation: rise .6s var(--ease) both;
@@ -156,9 +157,9 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 .icon-btn:active { transform: scale(0.94); }
 
 /* ---------- Menu ---------- */
-.menu-wrap { position: relative; }
+.menu-wrap { position: relative; z-index: 110; }
 .menu {
-  position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; min-width: 240px;
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 1000; min-width: 240px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 14px; padding: 6px;
   box-shadow: var(--shadow-lg);
   opacity: 0; transform: translateY(-6px) scale(0.97); transform-origin: top right; pointer-events: none;
