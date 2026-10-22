@@ -6,7 +6,6 @@
   const OPEN_KEY = "bwrb.openMonths";
   const SEED_FIX_KEY = "bwrb.seedFix";
   const SEED_FIX_VERSION = "2";
-  const SEED_URL = "data/bewerbungen.csv";
   const VIEW_KEY = "bwrb.view";
   const PRIVACY_KEY = "bwrb.privacyMode";
   const SUPABASE_URL = "https://coxmnerqoaclawbbgipx.supabase.co";
@@ -2348,17 +2347,6 @@
     const { data, error } = await db.from("applications").select("*").order("datum", { ascending: false, nullsFirst: false });
     if (error) throw error;
     state.apps = (data || []).map(fromRow);
-    if (!state.apps.length) {
-      const seedResponse = await fetch(SEED_URL, { cache: "no-store" });
-      if (seedResponse.ok) {
-        state.apps = appsFromCSV(await seedResponse.text());
-        if (state.apps.length) {
-          const { error: seedError } = await db.from("applications").upsert(state.apps.map(toRow), { onConflict: "id" });
-          if (seedError) throw seedError;
-          setTimeout(() => toast(`${state.apps.length} vorhandene Bewerbungen übernommen`), 500);
-        }
-      }
-    }
     try { localStorage.setItem(`${STORAGE_KEY}.${currentUser.id}`, JSON.stringify(state.apps)); } catch {}
     setSyncState("", "Gespeichert");
   }
