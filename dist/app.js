@@ -10,8 +10,10 @@
   const PRIVACY_KEY = "bwrb.privacyMode";
   const SUPABASE_URL = "https://coxmnerqoaclawbbgipx.supabase.co";
   const SUPABASE_KEY = "sb_publishable_2oKHLoM5fCrNiQ1FCpvPig_0Ci3zISR";
+  const SUPABASE_AUTH_KEY = "sb-coxmnerqoaclawbbgipx-auth-token";
+  clearLegacySensitiveStorage();
   const db = window.supabase?.createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    auth: { persistSession: false, autoRefreshToken: true, detectSessionInUrl: true },
   });
   let currentUser = null;
   let syncTimer = null;
@@ -73,7 +75,10 @@
 
   /* ---------- Helpers ---------- */
   const $ = (sel, root = document) => root.querySelector(sel);
-  const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  const uid = () => globalThis.crypto?.randomUUID?.()
+    || Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
+  const safeId = (value) => SAFE_ID.test(String(value ?? "")) ? String(value) : uid();
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const todayISO = () => new Date().toISOString().slice(0, 10);
   const addDaysISO = (iso, days) => {
@@ -173,15 +178,18 @@
   }
 
   /* ---------- Storage ---------- */
-  function load() {
+  function clearLegacySensitiveStorage() {
     try {
-      const raw = localStorage.getItem(currentUser ? `${STORAGE_KEY}.${currentUser.id}` : STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
+      for (const key of Object.keys(localStorage)) {
+        if (key === STORAGE_KEY || key.startsWith(`${STORAGE_KEY}.`)
+          || key === SUPABASE_AUTH_KEY || key.startsWith(`${SUPABASE_AUTH_KEY}.`)) {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch {}
   }
+
   function persist() {
-    try { localStorage.setItem(`${STORAGE_KEY}.${currentUser?.id || "local"}`, JSON.stringify(state.apps)); }
-    catch { toast("Speichern im Browser nicht möglich – bitte Backup exportieren"); }
     if (!currentUser) return;
     clearTimeout(syncTimer);
     const generation = ++syncGeneration;
@@ -520,7 +528,7 @@
     const age = a.status === "offen" && d !== null ? relDays(d) : a.absageAm ? `Entscheid ${fmtDate(a.absageAm)}` : "";
     const followUp = followUpChipHTML(a);
     return `
-      <button class="card" data-id="${a.id}" style="--i:${Math.min(i, 24)};--c:${s.color}">
+      <button class="card" data-id="${esc(a.id)}" style="--i:${Math.min(i, 24)};--c:${s.color}">
         <div class="avatar" style="--h:${hue(a.firma)}">${esc(privateInitials(a.firma))}</div>
         <div class="card-main">
           <div class="card-title"><strong>${esc(privateCompany(a.firma))}</strong></div>
@@ -1026,7 +1034,7 @@
 
   function miniRowHTML(a, side) {
     return `
-      <button class="mini-row" data-open-id="${a.id}">
+      <button class="mini-row" data-open-id="${esc(a.id)}">
         <span class="avatar sm" style="--h:${hue(a.firma)}">${esc(privateInitials(a.firma))}</span>
         <span class="mini-main"><b>${esc(privateCompany(a.firma))}</b><small>${esc(a.stelle || "—")}</small></span>
         <span class="mini-side">${side}</span>
@@ -1547,12 +1555,12 @@
       const t = LINK_TYPE[l.type] || LINK_TYPE.sonstiges;
       const href = /^https?:\/\//i.test(l.url) ? l.url : "https://" + l.url;
       return `
-        <div class="link-item" data-id="${l.id}">
+        <div class="link-item" data-id="${esc(l.id)}">
           <span class="link-icon" style="--c:${t.color}">${l.url.includes("mail.") ? ICONS.mail : ICONS.link}</span>
           <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">
             <b>${t.label}</b><small>${esc(prettyUrl(l.url))}</small>
           </a>
-          <button type="button" class="mini-btn" data-remove-link="${l.id}" aria-label="Link entfernen">${ICONS.x}</button>
+          <button type="button" class="mini-btn" data-remove-link="${esc(l.id)}" aria-label="Link entfernen">${ICONS.x}</button>
         </div>`;
     }).join("") : `<div class="empty-mini">Noch keine Links – füge z.B. den Gmail-Link zur Bestätigung hinzu.</div>`;
   }
@@ -1560,10 +1568,10 @@
   function renderNotes() {
     const notes = [...state.draft.notes].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
     notesList.innerHTML = notes.map((n) => `
-      <li class="note" data-id="${n.id}">
+      <li class="note" data-id="${esc(n.id)}">
         <div class="note-head">
           <time>${fmtDateLong(n.date)}</time>
-          <button type="button" class="mini-btn" data-remove-note="${n.id}" aria-label="Notiz löschen">${ICONS.x}</button>
+          <button type="button" class="mini-btn" data-remove-note="${esc(n.id)}" aria-label="Notiz löschen">${ICONS.x}</button>
         </div>
         <p>${esc(n.text)}</p>
       </li>`).join("");
@@ -1622,7 +1630,7 @@
   }
 
   function flashCard(id) {
-    const el = els.list.querySelector(`[data-id="${id}"]`);
+    const el = els.list.querySelector(`[data-id="${CSS.escape(String(id))}"]`);
     if (!el) return;
     el.animate(
       [{ boxShadow: "0 0 0 0 rgba(99,102,241,0.5)" }, { boxShadow: "0 0 0 8px rgba(99,102,241,0)" }],
@@ -2006,7 +2014,7 @@
       for (const [k, v] of Object.entries(a.phaseDates)) if (PHASE[k] && parseDate(v)) phaseDates[k] = parseDate(v);
     }
     return {
-      id: a.id || uid(),
+      id: safeId(a.id),
       firma: String(a.firma || ""),
       stelle: String(a.stelle || ""),
       datum: parseDate(a.datum),
@@ -2014,8 +2022,8 @@
       phase,
       phaseDates,
       absageAm: parseDate(a.absageAm),
-      links: Array.isArray(a.links) ? a.links.filter((l) => l && l.url).map((l) => ({ id: l.id || uid(), type: LINK_TYPE[l.type] ? l.type : "sonstiges", url: String(l.url) })) : [],
-      notes: Array.isArray(a.notes) ? a.notes.filter((n) => n && n.text).map((n) => ({ id: n.id || uid(), text: String(n.text), date: parseDate(n.date) || todayISO() })) : [],
+      links: Array.isArray(a.links) ? a.links.filter((l) => l && l.url).map((l) => ({ id: safeId(l.id), type: LINK_TYPE[l.type] ? l.type : "sonstiges", url: String(l.url) })) : [],
+      notes: Array.isArray(a.notes) ? a.notes.filter((n) => n && n.text).map((n) => ({ id: safeId(n.id), text: String(n.text), date: parseDate(n.date) || todayISO() })) : [],
       jobUrl: String(a.jobUrl || ""),
       jobDescription: String(a.jobDescription || ""),
       companyLogoUrl: String(a.companyLogoUrl || ""),
@@ -2342,12 +2350,9 @@
 
   async function loadCloudData() {
     setSyncState("syncing", "Lädt…");
-    const cached = load();
-    if (cached?.length) state.apps = cached.map(normalize);
     const { data, error } = await db.from("applications").select("*").order("datum", { ascending: false, nullsFirst: false });
     if (error) throw error;
     state.apps = (data || []).map(fromRow);
-    try { localStorage.setItem(`${STORAGE_KEY}.${currentUser.id}`, JSON.stringify(state.apps)); } catch {}
     setSyncState("", "Gespeichert");
   }
 
@@ -2361,8 +2366,7 @@
     try {
       await loadCloudData();
     } catch (error) {
-      console.error("Supabase load failed", error);
-      state.apps = (load() || []).map(normalize);
+      state.apps = [];
       setSyncState("error", "Einrichtung nötig");
       setTimeout(() => toast(error.code === "42P01" ? "Bitte zuerst das Supabase SQL-Skript ausführen" : "Cloud-Daten konnten nicht geladen werden"), 500);
     }
