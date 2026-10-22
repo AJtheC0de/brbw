@@ -49,6 +49,14 @@
   ];
   const LINK_TYPE = Object.fromEntries(LINK_TYPES.map((t) => [t.id, t]));
 
+  const EMAIL_TEMPLATE_LABELS = {
+    follow7: "Freundliche Nachfrage nach 7 Tagen",
+    follow14: "Freundliche Nachfrage nach 14 Tagen",
+    follow21: "Freundliche Nachfrage nach 21 Tagen",
+    thanks: "Dankesmail nach dem Interview",
+    nextstep: "Nachfrage zum nächsten Prozessschritt",
+  };
+
   const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
 
   const ICONS = {
@@ -1215,8 +1223,12 @@
   const linkType = $("#linkType"), linkUrl = $("#linkUrl"), noteText = $("#noteText");
   const followupState = $("#followupState"), snoozeFollowUpBtn = $("#snoozeFollowUpBtn"), completeFollowUpBtn = $("#completeFollowUpBtn");
   const magicImport = $(".magic-import"), jobImportUrl = $("#jobImportUrl"), magicImportStatus = $("#magicImportStatus"), runMagicImportBtn = $("#runMagicImportBtn");
+  const emailTemplateTabs = $("#emailTemplateTabs"), emailSubject = $("#emailSubject"), emailBody = $("#emailBody");
+  const emailRecipient = $("#emailRecipient"), emailComposerHint = $("#emailComposerHint");
   const formField = (name) => form.elements.namedItem(name);
   let lastFocus = null;
+  let emailTemplateId = "follow7";
+  let emailTextCustomized = false;
 
   linkType.innerHTML = LINK_TYPES.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
 
@@ -1253,6 +1265,9 @@
     $("#deleteBtn").hidden = state.isNew;
 
     renderDrawerHead(); renderStatusPicker(); renderPhase(); renderFollowUpControls(); renderLinks(); renderNotes();
+    emailTemplateId = "follow7";
+    emailTextCustomized = false;
+    renderEmailComposer(true);
 
     overlay.hidden = false;
     drawer.setAttribute("aria-hidden", "false");
@@ -1352,6 +1367,7 @@
       syncDraftFields();
       renderDrawerHead();
       renderLinks();
+      renderEmailComposer(!emailTextCustomized);
       const confidence = Math.round((Number(result.confidence) || 0) * 100);
       setMagicStatus(`${filled} Felder übernommen${confidence ? ` · ${confidence}% Erkennungssicherheit` : ""}. Bitte kurz prüfen.`, "success");
     } catch (error) {
@@ -1381,6 +1397,82 @@
       completeFollowUpBtn.textContent = "Erledigt";
     }
     completeFollowUpBtn.disabled = !date && !form.nextAction.value.trim() && !d.followUpDoneAt;
+  }
+
+  function latestInterviewDate() {
+    const dates = PHASES.slice(1)
+      .map((phase) => parseDate(state.draft?.phaseDates?.[phase.id]))
+      .filter(Boolean)
+      .sort()
+      .reverse();
+    return dates[0] || parseDate(form.datum.value) || todayISO();
+  }
+
+  function emailTemplateContent(templateId) {
+    const company = form.firma.value.trim() || "dem Unternehmen";
+    const role = form.stelle.value.trim() || "der ausgeschriebenen Position";
+    const applicationDate = parseDate(form.datum.value) || todayISO();
+    const interviewDate = latestInterviewDate();
+    const greeting = form.contactName.value.trim() ? `Hallo ${form.contactName.value.trim()},` : "Guten Tag,";
+    const closing = "Freundliche Grüsse";
+    const followDays = Number(templateId.replace("follow", ""));
+
+    if (followDays) {
+      return {
+        subject: `Nachfrage zu meiner Bewerbung als ${role}`,
+        body: `${greeting}\n\nam ${fmtDate(applicationDate)} habe ich mich bei ${company} als ${role} beworben. Da seit meiner Bewerbung inzwischen ${followDays} Tage vergangen sind, möchte ich mich freundlich nach dem aktuellen Stand des Auswahlprozesses erkundigen.\n\nDie Position interessiert mich weiterhin sehr. Über eine kurze Rückmeldung zum weiteren Vorgehen freue ich mich.\n\n${closing}`,
+      };
+    }
+    if (templateId === "thanks") {
+      return {
+        subject: `Vielen Dank für das Gespräch zur Position ${role}`,
+        body: `${greeting}\n\nvielen Dank für das angenehme Gespräch am ${fmtDate(interviewDate)} zur Position ${role} bei ${company}. Der Austausch hat mein Interesse an der Rolle und an einer Zusammenarbeit nochmals bestärkt.\n\nFalls Sie noch weitere Informationen von mir benötigen, lasse ich Ihnen diese gerne zukommen. Ich freue mich auf die nächsten Schritte.\n\n${closing}`,
+      };
+    }
+    return {
+      subject: `Nächste Schritte im Bewerbungsprozess – ${role}`,
+      body: `${greeting}\n\nnochmals vielen Dank für den bisherigen Austausch zur Position ${role} bei ${company} am ${fmtDate(interviewDate)}. Ich wollte mich freundlich erkundigen, wie der weitere Bewerbungsprozess aussieht und wann ich ungefähr mit einer Rückmeldung rechnen darf.\n\nMein Interesse an der Position besteht weiterhin, und ich freue mich auf den nächsten Schritt.\n\n${closing}`,
+    };
+  }
+
+  function renderEmailComposer(resetText = false) {
+    if (!state.draft) return;
+    const recipient = form.contactEmail.value.trim();
+    emailRecipient.textContent = recipient ? `An ${recipient}` : "Noch keine Kontakt-E-Mail hinterlegt";
+    emailTemplateTabs.querySelectorAll("[data-email-template]").forEach((tab) => {
+      const active = tab.dataset.emailTemplate === emailTemplateId;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+    });
+    if (resetText || !emailTextCustomized) {
+      const content = emailTemplateContent(emailTemplateId);
+      emailSubject.value = content.subject;
+      emailBody.value = content.body;
+      emailTextCustomized = false;
+    }
+    emailComposerHint.textContent = EMAIL_TEMPLATE_LABELS[emailTemplateId];
+  }
+
+  async function copyEmailDraft() {
+    const text = `Betreff: ${emailSubject.value.trim()}\n\n${emailBody.value.trim()}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("E-Mail-Text kopiert");
+    } catch {
+      emailBody.focus();
+      emailBody.select();
+      toast("Text markieren und mit ⌘/Ctrl + C kopieren");
+    }
+  }
+
+  function openEmailDraft() {
+    const recipient = form.contactEmail.value.trim();
+    const subject = emailSubject.value.trim();
+    const body = emailBody.value.trim();
+    if (!subject && !body) return toast("Bitte ergänze zuerst den E-Mail-Text");
+    const mailto = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = mailto;
+    if (!recipient) toast("Mailprogramm geöffnet – Empfänger bitte ergänzen");
   }
 
   function isDirty() {
@@ -1433,6 +1525,7 @@
     PHASES.forEach((p, i) => { if (i > idx) delete d.phaseDates[p.id]; });
     if (idx > 0 && !d.phaseDates[id]) d.phaseDates[id] = todayISO();
     renderPhase();
+    renderEmailComposer(!emailTextCustomized);
   }
 
   function renderStatusPicker() {
@@ -1885,10 +1978,24 @@
     if (phaseDate.value) state.draft.phaseDates[state.draft.phase] = phaseDate.value;
     else delete state.draft.phaseDates[state.draft.phase];
     renderPhase();
+    renderEmailComposer(!emailTextCustomized);
   });
-  form.datum.addEventListener("change", renderPhase);
-  form.firma.addEventListener("input", renderDrawerHead);
-  form.stelle.addEventListener("input", renderDrawerHead);
+  form.datum.addEventListener("change", () => { renderPhase(); renderEmailComposer(!emailTextCustomized); });
+  form.firma.addEventListener("input", () => { renderDrawerHead(); renderEmailComposer(!emailTextCustomized); });
+  form.stelle.addEventListener("input", () => { renderDrawerHead(); renderEmailComposer(!emailTextCustomized); });
+  form.contactName.addEventListener("input", () => renderEmailComposer(!emailTextCustomized));
+  form.contactEmail.addEventListener("input", () => renderEmailComposer(false));
+  emailTemplateTabs.addEventListener("click", (event) => {
+    const tab = event.target.closest("[data-email-template]");
+    if (!tab) return;
+    emailTemplateId = tab.dataset.emailTemplate;
+    emailTextCustomized = false;
+    renderEmailComposer(true);
+  });
+  emailSubject.addEventListener("input", () => { emailTextCustomized = true; });
+  emailBody.addEventListener("input", () => { emailTextCustomized = true; });
+  $("#copyEmailBtn").addEventListener("click", copyEmailDraft);
+  $("#openEmailBtn").addEventListener("click", openEmailDraft);
   runMagicImportBtn.addEventListener("click", runMagicImport);
   jobImportUrl.addEventListener("keydown", (event) => {
     if (event.key === "Enter") { event.preventDefault(); runMagicImport(); }

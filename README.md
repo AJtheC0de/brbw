@@ -11,6 +11,8 @@ Web-App (HTML/CSS/JS) zum Tracken von Bewerbungen mit geschützter Supabase-Sync
 - Suche, Filter, Sortierung, Statistik
 - Import/Export als CSV und JSON-Backup, inklusive CSV-Export einzelner Monate
 - Smart Magic Import: Job-URL einfügen und Firma, Rolle, Beschreibung sowie Stellendetails mit OpenAI übernehmen
+- Personalisierte E-Mail-Vorlagen für Nachfragen nach 7/14/21 Tagen, Interview-Dank und nächste Prozessschritte
+- E-Mail-Entwurf vorab bearbeiten oder kopieren und mit Empfänger, Betreff und Nachricht im Standard-Mailprogramm öffnen
 
 Die Daten werden nach der Anmeldung in Supabase gespeichert und zusätzlich lokal
 zwischengespeichert. Beim ersten Öffnen werden die Einträge aus `data/bewerbungen.csv`

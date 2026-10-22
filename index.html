@@ -242,6 +242,43 @@
               <button type="button" class="btn ghost sm done-btn" id="completeFollowUpBtn">Erledigt</button>
             </div>
           </div>
+
+          <section class="email-composer" aria-labelledby="emailComposerTitle">
+            <div class="email-composer-head">
+              <span class="email-composer-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 7l9 6 9-6"/></svg>
+              </span>
+              <div>
+                <h4 id="emailComposerTitle">E-Mail-Vorlage</h4>
+                <p id="emailRecipient">Empfänger wird aus der Kontakt-E-Mail übernommen</p>
+              </div>
+            </div>
+            <div class="email-template-tabs" id="emailTemplateTabs" role="tablist" aria-label="E-Mail-Vorlage wählen">
+              <button type="button" class="email-template-tab active" role="tab" aria-selected="true" data-email-template="follow7">Nach 7 Tagen</button>
+              <button type="button" class="email-template-tab" role="tab" aria-selected="false" data-email-template="follow14">Nach 14 Tagen</button>
+              <button type="button" class="email-template-tab" role="tab" aria-selected="false" data-email-template="follow21">Nach 21 Tagen</button>
+              <button type="button" class="email-template-tab" role="tab" aria-selected="false" data-email-template="thanks">Danke</button>
+              <button type="button" class="email-template-tab" role="tab" aria-selected="false" data-email-template="nextstep">Nächster Schritt</button>
+            </div>
+            <div class="email-composer-preview">
+              <label class="field">
+                <span>Betreff</span>
+                <input id="emailSubject" type="text" aria-label="E-Mail-Betreff">
+              </label>
+              <label class="field">
+                <span>Nachricht</span>
+                <textarea id="emailBody" rows="9" aria-label="E-Mail-Nachricht"></textarea>
+              </label>
+            </div>
+            <div class="email-composer-actions">
+              <span class="email-composer-hint" id="emailComposerHint" role="status">Vor dem Öffnen frei bearbeitbar</span>
+              <button type="button" class="btn ghost sm" id="copyEmailBtn">Kopieren</button>
+              <button type="button" class="btn primary sm" id="openEmailBtn">
+                <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 7l9 6 9-6"/></svg>
+                E-Mail entwerfen
+              </button>
+            </div>
+          </section>
         </div>
 
         <div class="block">
