@@ -741,6 +741,36 @@ textarea { height: auto; padding: 10px 12px; resize: vertical; min-height: 64px;
 .role-bar { display: block; height: 4px; width: var(--w); margin-top: 5px; border-radius: 99px; background: color-mix(in srgb, var(--accent) 45%, transparent); }
 @media (max-width: 560px) { .hide-sm { display: none; } }
 
+/* ---------- Monatskarte Vorschau ---------- */
+.share-preview-overlay {
+  position: fixed; inset: 0; z-index: 90; background: rgba(15,23,42,.55);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  opacity: 0; transition: opacity .3s var(--ease);
+}
+.share-preview-overlay.show { opacity: 1; }
+.share-preview {
+  position: fixed; z-index: 91; left: 50%; top: 50%; width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 24px);
+  display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(255,255,255,.7); border-radius: 24px;
+  background: rgba(255,255,255,.92); box-shadow: 0 28px 90px rgba(15,23,42,.28); backdrop-filter: blur(24px);
+  opacity: 0; visibility: hidden; transform: translate(-50%, -46%) scale(.96);
+  transition: opacity .25s var(--ease), transform .35s var(--spring), visibility 0s .35s;
+}
+.share-preview.open { opacity: 1; visibility: visible; transform: translate(-50%, -50%) scale(1); transition-delay: 0s; }
+.share-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid var(--border); }
+.share-preview-head h2 { font-size: 18px; }
+.share-preview-head p { font-size: 12px; margin-top: 2px; }
+.share-preview-body { min-height: 0; overflow: auto; padding: 18px; background: linear-gradient(145deg,#eef2ff,#faf5ff 55%,#fff7ed); }
+.share-preview-body img { display: block; width: min(100%, 400px); margin: auto; border-radius: 18px; box-shadow: 0 18px 45px rgba(58,45,108,.22); }
+.share-preview-foot { display: flex; align-items: center; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border); }
+@media (max-width: 520px) {
+  .share-preview { width: 100vw; max-height: 94vh; top: auto; bottom: 0; border-radius: 24px 24px 0 0; transform: translate(-50%, 8%) scale(.98); }
+  .share-preview.open { transform: translate(-50%, 0) scale(1); }
+  .share-preview-body { padding: 12px; }
+  .share-preview-foot { flex-wrap: wrap; }
+  .share-preview-foot .spacer, .share-preview-foot [data-close-share] { display: none; }
+  .share-preview-foot .btn { flex: 1; }
+}
+
 /* Tooltip */
 .tip {
   position: fixed; z-index: 60; pointer-events: none; max-width: 260px;

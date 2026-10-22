@@ -256,6 +256,24 @@
     </div>
   </section>
 
+  <!-- Share card preview -->
+  <div class="share-preview-overlay" id="sharePreviewOverlay" hidden></div>
+  <section class="share-preview" id="sharePreview" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="sharePreviewTitle">
+    <div class="share-preview-head">
+      <div><h2 id="sharePreviewTitle">Deine Monatskarte</h2><p class="muted">Bereit zum Posten · ohne Firmennamen</p></div>
+      <button type="button" class="icon-btn" data-close-share aria-label="Schliessen">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="share-preview-body"><img id="sharePreviewImage" alt="Vorschau der generierten Monatskarte"></div>
+    <div class="share-preview-foot">
+      <button type="button" class="btn ghost" data-close-share>Schliessen</button>
+      <div class="spacer"></div>
+      <button type="button" class="btn ghost" id="downloadShareCard">PNG speichern</button>
+      <button type="button" class="btn primary" id="nativeShareCard">Teilen</button>
+    </div>
+  </section>
+
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <input type="file" id="fileInput" accept=".csv,.json,text/csv,application/json" hidden>
 

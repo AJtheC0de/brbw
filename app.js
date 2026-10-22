@@ -598,7 +598,8 @@
     const pct = (n) => total ? Math.round(n / total * 100) : 0;
     const roleCounts = new Map();
     apps.forEach((a) => {
-      const role = cleanRole(a.stelle) || "Nicht angegeben";
+      const cleaned = cleanRole(a.stelle) || "Nicht angegeben";
+      const role = ROLE_ALIASES[cleaned.toLowerCase()] || cleaned;
       roleCounts.set(role, (roleCounts.get(role) || 0) + 1);
     });
     const roles = [...roleCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "de")).slice(0, 3);
@@ -606,67 +607,119 @@
     const canvas = document.createElement("canvas");
     canvas.width = 1200; canvas.height = 1500;
     const ctx = canvas.getContext("2d");
-    const bg = ctx.createLinearGradient(0, 0, 1200, 1500);
-    bg.addColorStop(0, "#f7f7ff"); bg.addColorStop(.55, "#ffffff"); bg.addColorStop(1, "#f5f3ff");
-    ctx.fillStyle = bg; ctx.fillRect(0, 0, 1200, 1500);
-
-    const glow = ctx.createRadialGradient(1040, 80, 0, 1040, 80, 540);
-    glow.addColorStop(0, "rgba(139,92,246,.20)"); glow.addColorStop(1, "rgba(139,92,246,0)");
-    ctx.fillStyle = glow; ctx.fillRect(0, 0, 1200, 650);
-
-    // Brand mark
-    const iconGrad = ctx.createLinearGradient(78, 72, 166, 160);
-    iconGrad.addColorStop(0, "#6366f1"); iconGrad.addColorStop(1, "#8b5cf6");
-    roundRect(ctx, 72, 72, 96, 96, 27, iconGrad);
-    ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.lineWidth = 10; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(100, 140); ctx.lineTo(140, 100); ctx.stroke();
-    [100, 120, 140].forEach((v, i) => { ctx.beginPath(); ctx.arc(v, 140 - i * 20, 9, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill(); });
-    ctx.fillStyle = "#0f172a"; ctx.font = "700 34px Inter, system-ui, sans-serif"; ctx.fillText("BEWERBUNGEN", 192, 113);
-    ctx.fillStyle = "#64748b"; ctx.font = "500 23px Inter, system-ui, sans-serif"; ctx.fillText("Mein Bewerbungsmonat", 192, 150);
-
-    ctx.fillStyle = "#0f172a"; ctx.font = "700 76px Inter, system-ui, sans-serif"; ctx.fillText(`${name} ${year}`.trim(), 72, 285);
-    ctx.fillStyle = "#64748b"; ctx.font = "500 26px Inter, system-ui, sans-serif"; ctx.fillText("Ein Monat in Zahlen", 76, 330);
-
-    roundRect(ctx, 72, 380, 1056, 270, 38, "#111827");
-    ctx.fillStyle = "#fff"; ctx.font = "700 132px Inter, system-ui, sans-serif"; ctx.fillText(String(total), 116, 548);
-    ctx.fillStyle = "rgba(255,255,255,.66)"; ctx.font = "600 27px Inter, system-ui, sans-serif"; ctx.fillText(total === 1 ? "BEWERBUNG" : "BEWERBUNGEN", 118, 598);
-    const metrics = [[`${pct(answered)}%`, "Antworten"], [`${pct(talks)}%`, "Gespräche"]];
-    metrics.forEach(([value, label], i) => {
-      const x = 570 + i * 270;
-      ctx.fillStyle = "#fff"; ctx.font = "700 58px Inter, system-ui, sans-serif"; ctx.fillText(value, x, 510);
-      ctx.fillStyle = "rgba(255,255,255,.62)"; ctx.font = "500 23px Inter, system-ui, sans-serif"; ctx.fillText(label, x, 554);
-    });
-
-    ctx.fillStyle = "#0f172a"; ctx.font = "700 30px Inter, system-ui, sans-serif"; ctx.fillText("Status im Überblick", 72, 730);
     const palette = { offen: "#3b82f6", angebot: "#10b981", absage: "#f43f5e", keine: "#94a3b8", zurueckgezogen: "#64748b" };
     const shown = STATUSES.filter((s) => counts[s.id]);
-    let barX = 72;
+
+    // Pearl background + soft aurora light
+    const bg = ctx.createLinearGradient(0, 0, 1200, 1500);
+    bg.addColorStop(0, "#f8f7ff"); bg.addColorStop(.46, "#eef5ff"); bg.addColorStop(1, "#fff7f0");
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, 1200, 1500);
+    const orb = (x, y, radius, inner) => {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      g.addColorStop(0, inner); g.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = g; ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    };
+    orb(1040, 150, 580, "rgba(167,139,250,.42)");
+    orb(120, 920, 520, "rgba(96,165,250,.30)");
+    orb(1080, 1320, 430, "rgba(251,146,60,.22)");
+    // subtle tactile grain
+    let seed = total * 97 + (key === "none" ? 7 : Number(key.replace("-", "")));
+    for (let i = 0; i < 1000; i++) {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      const x = seed % 1200; seed = (seed * 1664525 + 1013904223) >>> 0;
+      const y = seed % 1500;
+      ctx.fillStyle = `rgba(30,41,59,${.012 + (seed % 8) / 1000})`; ctx.fillRect(x, y, 1.5, 1.5);
+    }
+
+    const glass = (x, y, w, h, r = 34, alpha = .58) => {
+      ctx.save();
+      ctx.shadowColor = "rgba(70,55,130,.13)"; ctx.shadowBlur = 42; ctx.shadowOffsetY = 18;
+      roundRect(ctx, x, y, w, h, r, `rgba(255,255,255,${alpha})`);
+      ctx.shadowColor = "transparent"; ctx.lineWidth = 2;
+      const stroke = ctx.createLinearGradient(x, y, x + w, y + h);
+      stroke.addColorStop(0, "rgba(255,255,255,.96)"); stroke.addColorStop(.55, "rgba(255,255,255,.46)"); stroke.addColorStop(1, "rgba(139,92,246,.16)");
+      ctx.strokeStyle = stroke; ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.stroke();
+      ctx.restore();
+    };
+
+    // Editorial header
+    const iconGrad = ctx.createLinearGradient(68, 62, 148, 142);
+    iconGrad.addColorStop(0, "#4f46e5"); iconGrad.addColorStop(.55, "#7c3aed"); iconGrad.addColorStop(1, "#a855f7");
+    roundRect(ctx, 66, 60, 82, 82, 25, iconGrad);
+    ctx.strokeStyle = "rgba(255,255,255,.88)"; ctx.lineWidth = 8; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(91, 119); ctx.lineTo(124, 86); ctx.stroke();
+    [91, 107.5, 124].forEach((v, i) => { ctx.beginPath(); ctx.arc(v, 119 - i * 16.5, 7, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill(); });
+    ctx.fillStyle = "#111827"; ctx.font = "750 29px Inter, system-ui, sans-serif"; ctx.fillText("BEWERBUNGEN", 172, 96);
+    ctx.fillStyle = "#64748b"; ctx.font = "520 20px Inter, system-ui, sans-serif"; ctx.fillText("MONTHLY REPORT", 173, 130);
+    roundRect(ctx, 910, 70, 220, 54, 27, "rgba(255,255,255,.55)");
+    ctx.fillStyle = "#6d28d9"; ctx.font = "700 18px Inter, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText(`${name.toUpperCase()} · ${year}`, 1020, 104); ctx.textAlign = "left";
+
+    ctx.fillStyle = "#111827"; ctx.font = "760 82px Inter, system-ui, sans-serif"; ctx.fillText("Mein Monat.", 66, 260);
+    ctx.fillStyle = "#475569"; ctx.font = "520 29px Inter, system-ui, sans-serif"; ctx.fillText("Fortschritt in Zahlen – klar, ehrlich, sichtbar.", 70, 310);
+
+    // Hero glass
+    glass(66, 360, 1068, 300, 44, .50);
+    const heroGrad = ctx.createLinearGradient(110, 400, 430, 620);
+    heroGrad.addColorStop(0, "#4f46e5"); heroGrad.addColorStop(1, "#9333ea");
+    ctx.fillStyle = heroGrad; ctx.font = "780 178px Inter, system-ui, sans-serif"; ctx.fillText(String(total), 106, 570);
+    ctx.fillStyle = "#475569"; ctx.font = "700 21px Inter, system-ui, sans-serif"; ctx.fillText(total === 1 ? "BEWERBUNG" : "BEWERBUNGEN", 116, 615);
+    const summary = answered
+      ? `${answered} Rückmeldung${answered === 1 ? "" : "en"} · ${talks ? `${talks} Gespräch${talks === 1 ? "" : "e"}` : "weiter im Prozess"}`
+      : "Konsequent gestartet · Antworten folgen";
+    ctx.fillStyle = "#111827"; ctx.font = "700 34px Inter, system-ui, sans-serif"; ctx.fillText(summary, 455, 460);
+    ctx.fillStyle = "#64748b"; ctx.font = "500 23px Inter, system-ui, sans-serif"; ctx.fillText(`${pct(answered)} % beantwortet`, 455, 505);
+    roundRect(ctx, 455, 548, 580, 18, 9, "rgba(99,102,241,.12)");
+    const progress = ctx.createLinearGradient(455, 0, 1035, 0); progress.addColorStop(0, "#6366f1"); progress.addColorStop(1, "#c084fc");
+    if (answered) roundRect(ctx, 455, 548, 580 * answered / total, 18, 9, progress);
+
+    // Bento metrics
+    const cards = [
+      { x: 66, w: 332, value: `${pct(answered)}%`, label: "Antwortquote", color: "#6366f1", note: `${answered} von ${total}` },
+      { x: 416, w: 332, value: `${pct(talks)}%`, label: "Gesprächsquote", color: "#8b5cf6", note: talks ? `${talks} erreicht` : "noch offen" },
+      { x: 766, w: 368, value: String(counts.offen || 0), label: "Aktuell offen", color: "#3b82f6", note: "im Rennen" },
+    ];
+    cards.forEach((c) => {
+      glass(c.x, 700, c.w, 190, 32, .48);
+      ctx.beginPath(); ctx.arc(c.x + 42, 744, 9, 0, Math.PI * 2); ctx.fillStyle = c.color; ctx.fill();
+      ctx.fillStyle = "#111827"; ctx.font = "760 54px Inter, system-ui, sans-serif"; ctx.fillText(c.value, c.x + 30, 818);
+      ctx.fillStyle = "#475569"; ctx.font = "650 20px Inter, system-ui, sans-serif"; ctx.fillText(c.label, c.x + 30, 854);
+      ctx.textAlign = "right"; ctx.fillStyle = "#94a3b8"; ctx.font = "550 17px Inter, system-ui, sans-serif"; ctx.fillText(c.note, c.x + c.w - 26, 854); ctx.textAlign = "left";
+    });
+
+    // Status glass + donut
+    glass(66, 930, 520, 390, 38, .53);
+    ctx.fillStyle = "#111827"; ctx.font = "730 28px Inter, system-ui, sans-serif"; ctx.fillText("Status", 102, 985);
+    const cx = 236, cy = 1124, radius = 92;
+    let start = -Math.PI / 2;
     shown.forEach((s) => {
-      const w = 1056 * counts[s.id] / total;
-      ctx.fillStyle = palette[s.id]; ctx.fillRect(barX, 770, w, 24); barX += w;
+      const angle = Math.PI * 2 * counts[s.id] / total;
+      ctx.beginPath(); ctx.arc(cx, cy, radius, start, start + angle); ctx.strokeStyle = palette[s.id]; ctx.lineWidth = 34; ctx.lineCap = "butt"; ctx.stroke(); start += angle;
     });
-    shown.forEach((s, i) => {
-      const col = i % 3, row = Math.floor(i / 3), x = 72 + col * 350, y = 850 + row * 82;
-      ctx.beginPath(); ctx.arc(x + 12, y - 9, 11, 0, Math.PI * 2); ctx.fillStyle = palette[s.id]; ctx.fill();
-      ctx.fillStyle = "#0f172a"; ctx.font = "700 28px Inter, system-ui, sans-serif"; ctx.fillText(String(counts[s.id]), x + 38, y);
-      ctx.fillStyle = "#64748b"; ctx.font = "500 21px Inter, system-ui, sans-serif"; ctx.fillText(s.label, x + 78, y - 2);
+    ctx.textAlign = "center"; ctx.fillStyle = "#111827"; ctx.font = "760 39px Inter, system-ui, sans-serif"; ctx.fillText(String(total), cx, cy + 10);
+    ctx.fillStyle = "#94a3b8"; ctx.font = "600 15px Inter, system-ui, sans-serif"; ctx.fillText("TOTAL", cx, cy + 37); ctx.textAlign = "left";
+    shown.slice(0, 4).forEach((s, i) => {
+      const x = 370, y = 1050 + i * 55;
+      ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fillStyle = palette[s.id]; ctx.fill();
+      ctx.fillStyle = "#475569"; ctx.font = "560 18px Inter, system-ui, sans-serif"; ctx.fillText(s.label, x + 22, y + 6);
+      ctx.textAlign = "right"; ctx.fillStyle = "#111827"; ctx.font = "720 19px Inter, system-ui, sans-serif"; ctx.fillText(String(counts[s.id]), 545, y + 6); ctx.textAlign = "left";
     });
 
-    const rolesY = shown.length > 3 ? 1040 : 970;
-    ctx.fillStyle = "#0f172a"; ctx.font = "700 30px Inter, system-ui, sans-serif"; ctx.fillText("Rollen im Fokus", 72, rolesY);
+    // Roles glass
+    glass(616, 930, 518, 390, 38, .53);
+    ctx.fillStyle = "#111827"; ctx.font = "730 28px Inter, system-ui, sans-serif"; ctx.fillText("Rollen im Fokus", 652, 985);
     roles.forEach(([role, count], i) => {
-      const y = rolesY + 62 + i * 82;
-      roundRect(ctx, 72, y - 36, 1056, 62, 18, i === 0 ? "#eef2ff" : "#f8fafc");
-      ctx.fillStyle = i === 0 ? "#6366f1" : "#94a3b8"; ctx.font = "700 21px Inter, system-ui, sans-serif"; ctx.fillText(String(i + 1).padStart(2, "0"), 98, y + 4);
-      ctx.fillStyle = "#1e293b"; ctx.font = "600 22px Inter, system-ui, sans-serif";
-      const label = role.length > 52 ? role.slice(0, 49) + "…" : role;
-      ctx.fillText(label, 156, y + 4);
-      ctx.textAlign = "right"; ctx.fillStyle = "#64748b"; ctx.fillText(`${count}×`, 1095, y + 4); ctx.textAlign = "left";
+      const y = 1048 + i * 84;
+      roundRect(ctx, 650, y, 450, 66, 22, i === 0 ? "rgba(99,102,241,.11)" : "rgba(255,255,255,.44)");
+      ctx.fillStyle = i === 0 ? "#6366f1" : "#94a3b8"; ctx.font = "750 17px Inter, system-ui, sans-serif"; ctx.fillText(String(i + 1).padStart(2, "0"), 674, y + 40);
+      ctx.fillStyle = "#334155"; ctx.font = "620 18px Inter, system-ui, sans-serif";
+      const label = role.length > 30 ? role.slice(0, 27) + "…" : role;
+      ctx.fillText(label, 724, y + 40);
+      ctx.textAlign = "right"; ctx.fillStyle = "#64748b"; ctx.font = "700 18px Inter, system-ui, sans-serif"; ctx.fillText(`${count}×`, 1072, y + 40); ctx.textAlign = "left";
     });
 
-    ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(72, 1410); ctx.lineTo(1128, 1410); ctx.stroke();
-    ctx.fillStyle = "#94a3b8"; ctx.font = "500 21px Inter, system-ui, sans-serif"; ctx.fillText("Fortschritt sichtbar machen. Schritt für Schritt.", 72, 1455);
-    ctx.textAlign = "right"; ctx.font = "700 21px Inter, system-ui, sans-serif"; ctx.fillStyle = "#6366f1"; ctx.fillText("BEWERBUNGEN", 1128, 1455); ctx.textAlign = "left";
+    roundRect(ctx, 66, 1360, 1068, 2, 1, "rgba(100,116,139,.22)");
+    ctx.fillStyle = "#64748b"; ctx.font = "540 19px Inter, system-ui, sans-serif"; ctx.fillText("Nicht perfekt. Aber konsequent.", 68, 1420);
+    ctx.fillStyle = "#111827"; ctx.font = "720 19px Inter, system-ui, sans-serif"; ctx.textAlign = "right"; ctx.fillText("BEWERBUNGEN · 2026", 1132, 1420); ctx.textAlign = "left";
 
     const data = canvas.toDataURL("image/png");
     const binary = atob(data.split(",")[1]);
@@ -674,16 +727,48 @@
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const filename = `bewerbungsmonat-${key === "none" ? "ohne-datum" : key}.png`;
     const file = new File([bytes], filename, { type: "image/png" });
-    const canNativeShare = navigator.maxTouchPoints > 0 && navigator.share && navigator.canShare?.({ files: [file] });
-    if (canNativeShare) {
-      navigator.share({ files: [file], title: `Mein Bewerbungsmonat ${name} ${year}`.trim() })
-        .then(() => toast("Monatskarte geteilt"))
-        .catch((error) => { if (error.name !== "AbortError") download(filename, file, "image/png"); });
-    } else {
-      download(filename, file, "image/png");
-      toast("Monatskarte als PNG gespeichert");
-    }
+    openSharePreview({ file, data, title: `Mein Bewerbungsmonat ${name} ${year}`.trim() });
   }
+
+  const sharePreview = $("#sharePreview"), sharePreviewOverlay = $("#sharePreviewOverlay");
+  const sharePreviewImage = $("#sharePreviewImage"), nativeShareCard = $("#nativeShareCard");
+  let pendingShareCard = null;
+
+  function openSharePreview(card) {
+    pendingShareCard = card;
+    sharePreviewImage.src = card.data;
+    const canShare = !!(navigator.share && navigator.canShare?.({ files: [card.file] }));
+    nativeShareCard.hidden = !canShare;
+    sharePreviewOverlay.hidden = false;
+    sharePreview.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    requestAnimationFrame(() => { sharePreviewOverlay.classList.add("show"); sharePreview.classList.add("open"); });
+    setTimeout(() => (canShare ? nativeShareCard : $("#downloadShareCard")).focus({ preventScroll: true }), 100);
+  }
+
+  function closeSharePreview() {
+    if (!sharePreview.classList.contains("open")) return;
+    sharePreview.classList.remove("open");
+    sharePreviewOverlay.classList.remove("show");
+    sharePreview.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
+    setTimeout(() => { if (!sharePreview.classList.contains("open")) sharePreviewOverlay.hidden = true; }, 300);
+  }
+
+  sharePreviewOverlay.addEventListener("click", closeSharePreview);
+  sharePreview.addEventListener("click", (e) => { if (e.target.closest("[data-close-share]")) closeSharePreview(); });
+  $("#downloadShareCard").addEventListener("click", () => {
+    if (!pendingShareCard) return;
+    download(pendingShareCard.file.name, pendingShareCard.file, "image/png");
+    toast("Monatskarte als PNG gespeichert");
+  });
+  nativeShareCard.addEventListener("click", async () => {
+    if (!pendingShareCard) return;
+    try {
+      await navigator.share({ files: [pendingShareCard.file], title: pendingShareCard.title });
+      toast("Monatskarte geteilt");
+    } catch (error) { if (error.name !== "AbortError") toast("Teilen nicht möglich – bitte PNG speichern"); }
+  });
 
   /* ---------- Statistiken ---------- */
   const DAY = 86400000;
@@ -1583,7 +1668,8 @@
   document.addEventListener("keydown", (e) => {
     const open = drawer.classList.contains("open");
     const importOpen = importDialog.classList.contains("open");
-    if (e.key === "Escape") { if (importOpen) closeImportDialog(); else if (open) closeDrawer(); else closeMenu(); return; }
+    const shareOpen = sharePreview.classList.contains("open");
+    if (e.key === "Escape") { if (shareOpen) closeSharePreview(); else if (importOpen) closeImportDialog(); else if (open) closeDrawer(); else closeMenu(); return; }
     if (importOpen) return;
     if (open && e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveDraft(); return; }
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
