@@ -16,7 +16,7 @@ Deno.serve(async (request) => {
       userId: user.id,
       rateLimit: { remaining: limit.remaining, resetAt: limit.reset_at },
       capabilities: {
-        magicImport: false,
+        magicImport: true,
         aiPreparation: false,
         inboundEmail: false,
       },

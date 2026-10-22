@@ -10,6 +10,7 @@ Web-App (HTML/CSS/JS) zum Tracken von Bewerbungen mit geschützter Supabase-Sync
 - Notizen mit Datum (Timeline)
 - Suche, Filter, Sortierung, Statistik
 - Import/Export als CSV und JSON-Backup, inklusive CSV-Export einzelner Monate
+- Smart Magic Import: Job-URL einfügen und Firma, Rolle, Beschreibung sowie Stellendetails mit OpenAI übernehmen
 
 Die Daten werden nach der Anmeldung in Supabase gespeichert und zusätzlich lokal
 zwischengespeichert. Beim ersten Öffnen werden die Einträge aus `data/bewerbungen.csv`
@@ -54,6 +55,15 @@ Variable `ALLOWED_ORIGINS` in den Supabase Edge Function Secrets hinterlegt werd
 KI- oder E-Mail-API-Schlüssel gehören ebenfalls ausschliesslich dorthin und niemals
 in `app.js`, Git oder Browser-Storage. Die Publishable Supabase-ID im Frontend ist
 kein geheimer Schlüssel; der Service-Role-Key wird weiterhin nicht im Browser benutzt.
+
+Für den Magic Import werden in Supabase unter Edge Functions → Secrets gesetzt:
+
+- `OPENAI_API_KEY`: geheimer OpenAI API-Key
+- `OPENAI_MODEL` (optional): standardmässig `gpt-6-luna`
+
+Danach muss die Edge Function `magic-import` veröffentlicht werden. Sie lädt nur öffentliche
+HTTP(S)-Stellenanzeigen, blockiert private Netzwerke, begrenzt Grösse und Laufzeit und nutzt
+Structured Outputs der OpenAI Responses API. Der API-Key wird nie an den Browser ausgeliefert.
 
 ## Importformat
 

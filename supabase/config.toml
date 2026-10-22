@@ -2,3 +2,6 @@ project_id = "bwrb"
 
 [functions.foundation-health]
 verify_jwt = false
+
+[functions.magic-import]
+verify_jwt = false

@@ -1214,15 +1214,19 @@
   const statusPicker = $("#statusPicker"), phaseStepper = $("#phaseStepper"), phaseDateWrap = $("#phaseDateWrap"), phaseDate = $("#phaseDate"), linksList = $("#linksList"), notesList = $("#notesList");
   const linkType = $("#linkType"), linkUrl = $("#linkUrl"), noteText = $("#noteText");
   const followupState = $("#followupState"), snoozeFollowUpBtn = $("#snoozeFollowUpBtn"), completeFollowUpBtn = $("#completeFollowUpBtn");
+  const magicImport = $(".magic-import"), jobImportUrl = $("#jobImportUrl"), magicImportStatus = $("#magicImportStatus"), runMagicImportBtn = $("#runMagicImportBtn");
+  const formField = (name) => form.elements.namedItem(name);
   let lastFocus = null;
 
   linkType.innerHTML = LINK_TYPES.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
 
-  function openDrawer(app) {
+  function openDrawer(app, { focusMagic = false } = {}) {
     state.isNew = !app;
     state.draft = app ? structuredClone(app) : {
       id: uid(), firma: "", stelle: "", datum: todayISO(), status: "offen", phase: "beworben", phaseDates: {}, absageAm: "",
-      contactName: "", contactEmail: "", nextAction: "", followUpAt: "", followUpDoneAt: "", links: [], notes: [], updated: Date.now(),
+      contactName: "", contactEmail: "", nextAction: "", followUpAt: "", followUpDoneAt: "",
+      jobUrl: "", jobDescription: "", companyLogoUrl: "", location: "", employmentType: "", workload: "", workModel: "", salaryText: "", sourceMetadata: {},
+      links: [], notes: [], updated: Date.now(),
     };
     state.draftOriginal = JSON.stringify(state.draft);
     lastFocus = document.activeElement;
@@ -1235,6 +1239,14 @@
     form.contactEmail.value = state.draft.contactEmail || "";
     form.nextAction.value = state.draft.nextAction || "";
     form.followUpAt.value = parseDate(state.draft.followUpAt);
+    formField("location").value = state.draft.location || "";
+    formField("employmentType").value = state.draft.employmentType || "";
+    formField("workload").value = state.draft.workload || "";
+    formField("workModel").value = state.draft.workModel || "";
+    formField("salaryText").value = state.draft.salaryText || "";
+    formField("jobDescription").value = state.draft.jobDescription || "";
+    jobImportUrl.value = state.draft.jobUrl || "";
+    setMagicStatus("");
     form.firma.classList.remove("invalid");
     linkUrl.value = ""; noteText.value = "";
     linkType.value = "bestaetigung";
@@ -1246,7 +1258,7 @@
     drawer.setAttribute("aria-hidden", "false");
     document.body.style.overflow = "hidden";
     requestAnimationFrame(() => { overlay.classList.add("show"); drawer.classList.add("open"); });
-    setTimeout(() => (state.isNew ? form.firma : drawer.querySelector(".drawer-head .icon-btn")).focus({ preventScroll: true }), 120);
+    setTimeout(() => (focusMagic ? jobImportUrl : state.isNew ? form.firma : drawer.querySelector(".drawer-head .icon-btn")).focus({ preventScroll: true }), 120);
   }
 
   function closeDrawer(force = false) {
@@ -1271,6 +1283,83 @@
     d.contactEmail = form.contactEmail.value.trim();
     d.nextAction = form.nextAction.value.trim();
     d.followUpAt = form.followUpAt.value;
+    d.location = formField("location").value.trim();
+    d.employmentType = formField("employmentType").value.trim();
+    d.workload = formField("workload").value.trim();
+    d.workModel = formField("workModel").value.trim();
+    d.salaryText = formField("salaryText").value.trim();
+    d.jobDescription = formField("jobDescription").value.trim();
+    d.jobUrl = jobImportUrl.value.trim();
+  }
+
+  function setMagicStatus(message, kind = "") {
+    magicImportStatus.textContent = message;
+    magicImportStatus.className = `magic-import-status ${kind}`.trim();
+    magicImport.classList.toggle("loading", kind === "loading");
+  }
+
+  function normalizedWebUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    try { return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).href; }
+    catch { return ""; }
+  }
+
+  async function runMagicImport() {
+    if (!state.draft || runMagicImportBtn.disabled) return;
+    const url = normalizedWebUrl(jobImportUrl.value);
+    if (!url) {
+      setMagicStatus("Bitte füge einen gültigen Job-Link ein.", "error");
+      jobImportUrl.focus();
+      return;
+    }
+    jobImportUrl.value = url;
+    runMagicImportBtn.disabled = true;
+    $("#pasteJobUrlBtn").disabled = true;
+    setMagicStatus("Stellenanzeige wird gelesen und mit OpenAI ausgewertet …", "loading");
+    try {
+      const { data, error } = await db.functions.invoke("magic-import", { body: { url } });
+      if (error) {
+        let message = error.message || "Import fehlgeschlagen";
+        try {
+          const details = await error.context?.json?.();
+          if (details?.message) message = details.message;
+        } catch {}
+        throw new Error(message);
+      }
+      if (!data?.ok || !data.data) throw new Error(data?.message || "Keine Stellenangaben erkannt.");
+      const result = data.data;
+      const values = {
+        firma: result.company, stelle: result.role, location: result.location,
+        employmentType: result.employmentType, workload: result.workload, workModel: result.workModel,
+        contactName: result.contactName, contactEmail: result.contactEmail,
+        salaryText: result.salaryText, jobDescription: result.description,
+      };
+      let filled = 0;
+      Object.entries(values).forEach(([name, value]) => {
+        const input = form.elements.namedItem(name);
+        if (input && String(value || "").trim()) { input.value = String(value).trim(); filled++; }
+      });
+      state.draft.jobUrl = result.jobUrl || url;
+      state.draft.companyLogoUrl = result.companyLogoUrl || "";
+      state.draft.sourceMetadata = {
+        ...(state.draft.sourceMetadata || {}),
+        magicImport: { source: result.source, model: result.model, confidence: result.confidence, importedAt: new Date().toISOString() },
+      };
+      if (!state.draft.links.some((link) => link.type === "inserat" && link.url === state.draft.jobUrl)) {
+        state.draft.links.push({ id: uid(), type: "inserat", url: state.draft.jobUrl });
+      }
+      syncDraftFields();
+      renderDrawerHead();
+      renderLinks();
+      const confidence = Math.round((Number(result.confidence) || 0) * 100);
+      setMagicStatus(`${filled} Felder übernommen${confidence ? ` · ${confidence}% Erkennungssicherheit` : ""}. Bitte kurz prüfen.`, "success");
+    } catch (error) {
+      setMagicStatus(error.message || "Magic Import ist gerade nicht verfügbar.", "error");
+    } finally {
+      runMagicImportBtn.disabled = false;
+      $("#pasteJobUrlBtn").disabled = false;
+    }
   }
 
   function renderFollowUpControls() {
@@ -1671,6 +1760,7 @@
 
   /* ---------- Events ---------- */
   $("#addBtn").addEventListener("click", () => openDrawer(null));
+  $("#magicImportBtn").addEventListener("click", () => openDrawer(null, { focusMagic: true }));
   $("#privacyBtn").addEventListener("click", togglePrivacyMode);
   $("#importBtn").addEventListener("click", openImportDialog);
   menuBtn.addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("open"); });
@@ -1799,6 +1889,23 @@
   form.datum.addEventListener("change", renderPhase);
   form.firma.addEventListener("input", renderDrawerHead);
   form.stelle.addEventListener("input", renderDrawerHead);
+  runMagicImportBtn.addEventListener("click", runMagicImport);
+  jobImportUrl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); runMagicImport(); }
+  });
+  jobImportUrl.addEventListener("paste", () => {
+    setTimeout(() => { if (normalizedWebUrl(jobImportUrl.value)) runMagicImport(); }, 80);
+  });
+  $("#pasteJobUrlBtn").addEventListener("click", async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!normalizedWebUrl(text)) throw new Error("In der Zwischenablage ist kein gültiger Link.");
+      jobImportUrl.value = text.trim();
+      runMagicImport();
+    } catch (error) {
+      setMagicStatus(error.message || "Zwischenablage konnte nicht gelesen werden. Füge den Link direkt ein.", "error");
+    }
+  });
   form.nextAction.addEventListener("input", () => {
     if (state.draft.followUpDoneAt) state.draft.followUpDoneAt = "";
     renderFollowUpControls();
