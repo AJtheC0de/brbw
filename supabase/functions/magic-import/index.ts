@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient, type User } from "npm:@supabase/supabase-js@2";
-import { isAllowedJobHost } from "../_shared/job-hosts.ts";
+import { isAllowedJobHost } from "./_shared/job-hosts.ts";
 
 const MAX_SOURCE_CHARS = 30_000;
 const DEFAULT_ORIGINS = ["https://bewerbungen-tracker-driton.ajnunidriton.chatgpt.site", "https://brbw.vercel.app"];

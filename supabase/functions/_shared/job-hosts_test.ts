@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { isAllowedJobHost } from "./job-hosts.ts";
+import { isAllowedJobHost } from "../magic-import/_shared/job-hosts.ts";
 
 Deno.test("accepts supported job platforms and their subdomains", () => {
   assertEquals(isAllowedJobHost("jobs.lever.co"), true);

@@ -71,7 +71,7 @@ HTTP(S)-Stellenanzeigen, blockiert private Netzwerke, begrenzt Grösse und Laufz
 Structured Outputs der OpenAI Responses API. Der API-Key wird nie an den Browser ausgeliefert.
 
 Zum Schutz vor DNS-Rebinding akzeptiert der Import nur die in
-`supabase/functions/_shared/job-hosts.ts` gepflegten Jobplattformen. Eigene vertrauenswürdige
+`supabase/functions/magic-import/_shared/job-hosts.ts` gepflegten Jobplattformen. Eigene vertrauenswürdige
 Karrieredomains können serverseitig über das kommagetrennte Secret
 `MAGIC_IMPORT_ALLOWED_HOSTS` ergänzt werden. Jeder Redirect wird erneut gegen diese Allowlist
 und gegen private IP-Bereiche geprüft.
