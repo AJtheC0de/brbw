@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient, type User } from "npm:@supabase/supabase-js@2";
+import { isAllowedJobHost } from "../_shared/job-hosts.ts";
 
 const MAX_SOURCE_CHARS = 30_000;
 const DEFAULT_ORIGINS = ["https://bewerbungen-tracker-driton.ajnunidriton.chatgpt.site", "https://brbw.vercel.app"];
@@ -63,6 +64,9 @@ async function assertSafePublicUrl(input: string) {
   let url: URL; try { url = new URL(input); } catch { throw new HttpError(400, "Ung\u00fcltige URL", "invalid_url"); }
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new HttpError(400, "Nur \u00f6ffentliche HTTP(S)-URLs sind erlaubt.", "invalid_url");
   const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  if (!isAllowedJobHost(host, Deno.env.get("MAGIC_IMPORT_ALLOWED_HOSTS") || "")) {
+    throw new HttpError(400, "Diese Jobplattform wird noch nicht unterst\u00fctzt.", "host_not_allowed");
+  }
   if (!host || PRIVATE_HOSTS.has(host) || host.endsWith(".localhost") || host.endsWith(".local") || blockedAddress(host)) throw new HttpError(400, "Private Netzwerkadressen sind nicht erlaubt.", "private_url");
   const [v4, v6] = await Promise.all([Deno.resolveDns(host, "A").catch(() => [] as string[]), Deno.resolveDns(host, "AAAA").catch(() => [] as string[])]);
   if (![...v4, ...v6].length || [...v4, ...v6].some(blockedAddress)) throw new HttpError(400, "Die URL ist nicht \u00f6ffentlich erreichbar.", "unresolvable_url");

@@ -70,6 +70,12 @@ Danach muss die Edge Function `magic-import` veröffentlicht werden. Sie lädt n
 HTTP(S)-Stellenanzeigen, blockiert private Netzwerke, begrenzt Grösse und Laufzeit und nutzt
 Structured Outputs der OpenAI Responses API. Der API-Key wird nie an den Browser ausgeliefert.
 
+Zum Schutz vor DNS-Rebinding akzeptiert der Import nur die in
+`supabase/functions/_shared/job-hosts.ts` gepflegten Jobplattformen. Eigene vertrauenswürdige
+Karrieredomains können serverseitig über das kommagetrennte Secret
+`MAGIC_IMPORT_ALLOWED_HOSTS` ergänzt werden. Jeder Redirect wird erneut gegen diese Allowlist
+und gegen private IP-Bereiche geprüft.
+
 ## E-Mail Inbox mit Resend einrichten
 
 1. Das aktuelle `supabase/setup.sql` im SQL Editor ausführen.

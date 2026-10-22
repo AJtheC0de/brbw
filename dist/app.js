@@ -57,6 +57,17 @@
     nextstep: "Nachfrage zum nächsten Prozessschritt",
   };
 
+  const MAGIC_IMPORT_ERRORS = {
+    host_not_allowed: "Diese Jobplattform wird noch nicht unterstützt.",
+    invalid_url: "Bitte füge einen gültigen Job-Link ein.",
+    private_url: "Private Netzwerkadressen sind nicht erlaubt.",
+    unresolvable_url: "Die Jobseite ist nicht öffentlich erreichbar.",
+    rate_limited: "Zu viele Importe. Bitte versuche es später erneut.",
+    upstream_failed: "Die Jobseite konnte nicht geladen werden.",
+    not_html: "Der Link zeigt nicht auf eine Webseite.",
+    upstream_too_large: "Die Jobseite ist zu gross.",
+  };
+
   const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
 
   const ICONS = {
@@ -1338,7 +1349,18 @@
     setMagicStatus("Stellenanzeige wird gelesen und mit OpenAI ausgewertet …", "loading");
     try {
       const { data, error } = await db.functions.invoke("magic-import", { body: { url } });
-      if (error || !data?.ok || !data.data) throw new Error("magic_import_failed");
+      if (error) {
+        let code = "";
+        try { code = String((await error.context?.json?.())?.error || ""); } catch {}
+        const failure = new Error("magic_import_failed");
+        failure.publicMessage = MAGIC_IMPORT_ERRORS[code] || "";
+        throw failure;
+      }
+      if (!data?.ok || !data.data) {
+        const failure = new Error("magic_import_failed");
+        failure.publicMessage = MAGIC_IMPORT_ERRORS[data?.error] || "";
+        throw failure;
+      }
       const result = data.data;
       const values = {
         firma: result.company, stelle: result.role, location: result.location,
@@ -1366,8 +1388,8 @@
       renderEmailComposer(!emailTextCustomized);
       const confidence = Math.round((Number(result.confidence) || 0) * 100);
       setMagicStatus(`${filled} Felder übernommen${confidence ? ` · ${confidence}% Erkennungssicherheit` : ""}. Bitte kurz prüfen.`, "success");
-    } catch {
-      setMagicStatus("Magic Import ist gerade nicht verfügbar.", "error");
+    } catch (error) {
+      setMagicStatus(error.publicMessage || "Magic Import ist gerade nicht verfügbar.", "error");
     } finally {
       runMagicImportBtn.disabled = false;
       $("#pasteJobUrlBtn").disabled = false;
