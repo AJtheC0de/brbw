@@ -10,10 +10,9 @@
   const PRIVACY_KEY = "bwrb.privacyMode";
   const SUPABASE_URL = "https://coxmnerqoaclawbbgipx.supabase.co";
   const SUPABASE_KEY = "sb_publishable_2oKHLoM5fCrNiQ1FCpvPig_0Ci3zISR";
-  const SUPABASE_AUTH_KEY = "sb-coxmnerqoaclawbbgipx-auth-token";
-  clearLegacySensitiveStorage();
+  clearLegacyApplicationStorage();
   const db = window.supabase?.createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: true, detectSessionInUrl: true },
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
   });
   let currentUser = null;
   let syncTimer = null;
@@ -178,11 +177,10 @@
   }
 
   /* ---------- Storage ---------- */
-  function clearLegacySensitiveStorage() {
+  function clearLegacyApplicationStorage() {
     try {
       for (const key of Object.keys(localStorage)) {
-        if (key === STORAGE_KEY || key.startsWith(`${STORAGE_KEY}.`)
-          || key === SUPABASE_AUTH_KEY || key.startsWith(`${SUPABASE_AUTH_KEY}.`)) {
+        if (key === STORAGE_KEY || key.startsWith(`${STORAGE_KEY}.`)) {
           localStorage.removeItem(key);
         }
       }
