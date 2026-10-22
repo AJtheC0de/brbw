@@ -107,12 +107,13 @@ create table if not exists public.automation_suggestions (
     references public.applications (id, user_id) on delete cascade
 );
 
--- One unguessable forwarding alias per account. The mail provider integration
--- will use this in a later phase; no mailbox is activated by this migration.
+-- One stable, human-readable forwarding alias per account. alias_token remains
+-- available as a legacy lookup key so previously issued addresses keep working.
 create table if not exists public.inbound_addresses (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   alias_token uuid not null default gen_random_uuid() unique,
+  alias_slug text unique,
   provider text not null default 'resend',
   enabled boolean not null default false,
   created_at timestamptz not null default now(),
@@ -121,8 +122,26 @@ create table if not exists public.inbound_addresses (
 );
 
 alter table public.inbound_addresses
+  add column if not exists alias_slug text,
   add column if not exists provider text not null default 'resend',
   add column if not exists updated_at timestamptz not null default now();
+
+create unique index if not exists inbound_addresses_alias_slug_idx
+  on public.inbound_addresses (lower(alias_slug))
+  where alias_slug is not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'inbound_addresses_alias_slug_format'
+      and conrelid = 'public.inbound_addresses'::regclass
+  ) then
+    alter table public.inbound_addresses
+      add constraint inbound_addresses_alias_slug_format
+      check (alias_slug is null or alias_slug ~ '^[a-z][a-z0-9-]{2,31}$');
+  end if;
+end $$;
 
 -- Minimal processing ledger for reliable webhook deduplication. Raw email bodies
 -- are fetched just-in-time from the provider and are never stored here.
@@ -170,7 +189,7 @@ do $$
 declare
   table_name text;
 begin
-  foreach table_name in array array['application_ai_artifacts', 'automation_suggestions', 'inbound_addresses', 'automation_runs']
+  foreach table_name in array array['application_ai_artifacts', 'automation_suggestions', 'automation_runs']
   loop
     execute format('drop policy if exists "Users manage own rows" on public.%I', table_name);
     execute format(
@@ -182,7 +201,14 @@ end $$;
 
 grant select, insert, update, delete on public.application_ai_artifacts to authenticated;
 grant select, insert, update, delete on public.automation_suggestions to authenticated;
-grant select, insert, update, delete on public.inbound_addresses to authenticated;
+drop policy if exists "Users manage own rows" on public.inbound_addresses;
+drop policy if exists "Users read own inbound address" on public.inbound_addresses;
+create policy "Users read own inbound address"
+  on public.inbound_addresses for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+revoke insert, update, delete on public.inbound_addresses from authenticated;
+grant select on public.inbound_addresses to authenticated;
 revoke all on public.inbound_messages from anon, authenticated;
 grant select on public.inbound_messages to authenticated;
 grant select, insert, update, delete on public.automation_runs to authenticated;

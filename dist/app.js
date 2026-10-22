@@ -1661,6 +1661,9 @@
   const inboundAddress = $("#inboundAddress"), inboundStatusText = $("#inboundStatusText");
   const inboundStatusDot = $("#inboundStatusDot"), toggleInboundBtn = $("#toggleInboundBtn");
   const copyInboundAddressBtn = $("#copyInboundAddressBtn"), inboundSuggestionsList = $("#inboundSuggestionsList");
+  const editInboundAliasBtn = $("#editInboundAliasBtn"), inboundAliasEditor = $("#inboundAliasEditor");
+  const inboundAliasInput = $("#inboundAliasInput"), inboundDomainSuffix = $("#inboundDomainSuffix");
+  const saveInboundAliasBtn = $("#saveInboundAliasBtn"), cancelInboundAliasBtn = $("#cancelInboundAliasBtn");
   const inboundBadge = $("#inboundBadge");
   let inboundSettings = null, inboundSuggestions = [], inboundLastFocus = null;
 
@@ -1693,6 +1696,43 @@
     toggleInboundBtn.disabled = !configured || Boolean(error);
     toggleInboundBtn.textContent = enabled ? "Deaktivieren" : "Aktivieren";
     copyInboundAddressBtn.disabled = !inboundSettings?.email;
+    editInboundAliasBtn.disabled = !configured || Boolean(error);
+    inboundDomainSuffix.textContent = `@${inboundSettings?.domain || "jobply.app"}`;
+  }
+
+  function closeInboundAliasEditor() {
+    inboundAliasEditor.hidden = true;
+    inboundAliasInput.setAttribute("aria-invalid", "false");
+    editInboundAliasBtn.focus({ preventScroll: true });
+  }
+
+  function openInboundAliasEditor() {
+    if (!inboundSettings?.configured) return;
+    inboundAliasInput.value = inboundSettings.alias || String(inboundSettings.email || "").split("@")[0];
+    inboundAliasEditor.hidden = false;
+    inboundAliasInput.focus({ preventScroll: true });
+    inboundAliasInput.select();
+  }
+
+  async function saveInboundAlias() {
+    const alias = inboundAliasInput.value.trim().toLowerCase();
+    if (!/^[a-z][a-z0-9-]{2,31}$/.test(alias)) {
+      inboundAliasInput.setAttribute("aria-invalid", "true");
+      toast("Bitte 3–32 gültige Zeichen verwenden");
+      return;
+    }
+    saveInboundAliasBtn.disabled = true;
+    const { data, error } = await db.functions.invoke("inbound-settings", { body: { alias } });
+    saveInboundAliasBtn.disabled = false;
+    if (error || !data?.ok) {
+      inboundAliasInput.setAttribute("aria-invalid", "true");
+      toast(data?.error === "alias_taken" ? "Diese Adresse ist bereits vergeben" : data?.message || "Adresse konnte nicht geändert werden");
+      return;
+    }
+    inboundSettings = data.data;
+    renderInboundSettings();
+    closeInboundAliasEditor();
+    toast("Deine Jobply-Adresse wurde aktualisiert");
   }
 
   function candidateOptions(selectedId = "") {
@@ -2073,6 +2113,13 @@
   });
   $("#refreshInboundBtn").addEventListener("click", () => refreshInbound());
   toggleInboundBtn.addEventListener("click", toggleInbound);
+  editInboundAliasBtn.addEventListener("click", openInboundAliasEditor);
+  cancelInboundAliasBtn.addEventListener("click", closeInboundAliasEditor);
+  saveInboundAliasBtn.addEventListener("click", saveInboundAlias);
+  inboundAliasInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); saveInboundAlias(); }
+    if (event.key === "Escape") { event.preventDefault(); closeInboundAliasEditor(); }
+  });
   copyInboundAddressBtn.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(inboundAddress.value);

@@ -96,13 +96,14 @@ function extractAddress(value: string) {
   return (value.match(/<([^>]+)>/)?.[1] || value).trim().toLowerCase();
 }
 
-function aliasToken(recipients: string[]) {
+function recipientIdentity(recipients: string[]) {
   for (const recipient of recipients) {
     const local = extractAddress(recipient).split("@")[0] || "";
     const match = local.match(/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i);
-    if (match) return match[1].toLowerCase();
+    if (match) return { token: match[1].toLowerCase(), alias: "" };
+    if (/^[a-z][a-z0-9-]{2,31}$/.test(local)) return { token: "", alias: local };
   }
-  return "";
+  return { token: "", alias: "" };
 }
 
 function htmlToText(html: string) {
@@ -272,14 +273,16 @@ Deno.serve(async (request) => {
   const event = JSON.parse(rawBody) as ResendEvent;
   if (event.type !== "email.received") return response({ ok: true, ignored: true });
   const emailId = String(event.data?.email_id || "");
-  const token = aliasToken(event.data?.to || []);
-  if (!emailId || !token) return response({ ok: true, ignored: true });
+  const identity = recipientIdentity(event.data?.to || []);
+  const lookupColumn = identity.token ? "alias_token" : "alias_slug";
+  const lookupValue = identity.token || identity.alias;
+  if (!emailId || !lookupValue) return response({ ok: true, ignored: true });
 
   const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: inboundAddress, error: addressError } = await admin
     .from("inbound_addresses")
     .select("user_id")
-    .eq("alias_token", token)
+    .eq(lookupColumn, lookupValue)
     .eq("enabled", true)
     .maybeSingle();
   if (addressError) {

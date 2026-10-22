@@ -778,6 +778,16 @@ textarea { height: auto; padding: 10px 12px; resize: vertical; min-height: 64px;
 .inbound-setup-head p { margin: 3px 0 0 18px; color: var(--text-2); font-size: 12px; }
 .inbound-address-row { display: flex; gap: 8px; margin-top: 14px; }
 .inbound-address-row input { min-width: 0; flex: 1; height: 38px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.86); color: var(--text-2); outline: none; }
+.inbound-alias-editor { margin-top: 10px; padding: 12px; border: 1px solid rgba(99,102,241,.2); border-radius: 14px; background: rgba(248,250,255,.8); }
+.inbound-alias-editor[hidden] { display: none; }
+.inbound-alias-editor > label { display: block; margin-bottom: 7px; color: var(--text-2); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.inbound-alias-control { display: flex; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.92); }
+.inbound-alias-control:focus-within { border-color: rgba(99,102,241,.55); box-shadow: 0 0 0 3px rgba(99,102,241,.1); }
+.inbound-alias-control input { min-width: 0; flex: 1; height: 38px; padding: 0 10px; border: 0; outline: 0; background: transparent; }
+.inbound-alias-control input[aria-invalid="true"] { color: var(--danger); }
+.inbound-alias-control span { padding: 0 11px 0 8px; color: var(--text-2); font-size: 13px; white-space: nowrap; }
+.inbound-alias-actions { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.inbound-alias-actions > span { margin-right: auto; color: var(--text-3); font-size: 11px; }
 .inbound-privacy-note { display: flex; align-items: flex-start; gap: 8px; margin: 13px 0 0; color: var(--text-2); font-size: 11.5px; }
 .inbound-privacy-note svg { width: 16px; height: 16px; color: var(--s-angebot); }
 .inbound-suggestions { margin-top: 22px; }
@@ -804,6 +814,8 @@ textarea { height: auto; padding: 10px 12px; resize: vertical; min-height: 64px;
   .inbound-dialog.open { transform: translate(-50%, 0) scale(1); }
   .inbound-head, .inbound-body { padding: 16px; }
   .inbound-setup-head, .inbound-address-row { align-items: stretch; flex-direction: column; }
+  .inbound-alias-actions { align-items: stretch; flex-wrap: wrap; }
+  .inbound-alias-actions > span { width: 100%; }
   .suggestion-actions { flex-wrap: wrap; }
   .suggestion-actions select { flex-basis: 100%; }
   .inbound-foot > span { display: none; }

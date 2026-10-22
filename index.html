@@ -398,6 +398,19 @@
         <div class="inbound-address-row">
           <input id="inboundAddress" type="text" readonly aria-label="Persönliche Weiterleitungsadresse" placeholder="Resend muss noch verbunden werden">
           <button type="button" class="btn primary sm" id="copyInboundAddressBtn" disabled>Adresse kopieren</button>
+          <button type="button" class="btn ghost sm" id="editInboundAliasBtn" disabled>Ändern</button>
+        </div>
+        <div class="inbound-alias-editor" id="inboundAliasEditor" hidden>
+          <label for="inboundAliasInput">Wunschadresse</label>
+          <div class="inbound-alias-control">
+            <input id="inboundAliasInput" type="text" inputmode="email" autocomplete="off" maxlength="32" spellcheck="false" aria-describedby="inboundAliasHint">
+            <span id="inboundDomainSuffix">@jobply.app</span>
+          </div>
+          <div class="inbound-alias-actions">
+            <span id="inboundAliasHint">3–32 Zeichen · Kleinbuchstaben, Zahlen und Bindestriche</span>
+            <button type="button" class="btn ghost sm" id="cancelInboundAliasBtn">Abbrechen</button>
+            <button type="button" class="btn primary sm" id="saveInboundAliasBtn">Speichern</button>
+          </div>
         </div>
         <p class="inbound-privacy-note">
           <svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg>

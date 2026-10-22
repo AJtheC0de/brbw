@@ -84,11 +84,12 @@ Structured Outputs der OpenAI Responses API. Der API-Key wird nie an den Browser
    - `RESEND_API_KEY`: serverseitiger Resend API-Key
    - `RESEND_WEBHOOK_SECRET`: Signing Secret des Resend-Webhooks (`whsec_…`)
    - `RESEND_INBOUND_DOMAIN`: konfigurierte Empfangs-Domain, zum Beispiel `inbound.example.com`
-   - `INBOUND_ADDRESS_PREFIX` (optional): standardmässig `track-`
    - `OPENAI_API_KEY` und optional `OPENAI_MODEL` wie beim Magic Import
 
 Danach in der App oben die **E-Mail Inbox** öffnen und aktivieren. Pro Konto wird eine
-unerratbare Adresse wie `track-<uuid>@inbound.example.com` erzeugt. Der Nutzer leitet eine
+eindeutige Adresse wie `driton-k7m2@jobply.app` erzeugt. Der lesbare Namensanteil stammt,
+wenn vorhanden, aus dem Benutzerprofil; ein kurzer Zufallscode verhindert Kollisionen. Alte
+UUID-Adressen bleiben während der Migration als Empfangsweg gültig. Der Nutzer leitet eine
 Bewerbungs-E-Mail dorthin weiter. Die App speichert keinen E-Mail-Rohtext, sondern nur den
 KI-Vorschlag und ein minimales Verarbeitungsprotokoll. Erst **Übernehmen** ändert die Bewerbung.
 
