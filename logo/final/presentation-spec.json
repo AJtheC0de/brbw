@@ -1,0 +1,29 @@
+{
+  "brand": "Bewerbungen",
+  "tagline": "Dein Überblick",
+  "brief": "Persönlicher Bewerbungs-Tracker als Web-App. Er soll Ordnung und Zuversicht vermitteln: jede Bewerbung ist ein Schritt auf einem Weg, nicht ein Stapel Papier.",
+  "adjectives": ["klar", "ruhig", "organisiert", "motivierend"],
+  "criteria": "Erfolg: kein Aktenkoffer-, Lupen- oder Lebenslauf-Klischee, erkennbar bei 16 px, funktioniert einfarbig, passt zum Indigo der App.",
+  "industry": "consumer-app",
+  "nav": ["Übersicht", "Verlauf", "Export"],
+  "brand_color": "#6366f1",
+  "greyscale": false,
+  "designer": "Bewerbungen",
+  "round": 2,
+  "concepts": [
+    {
+      "name": "Etappen",
+      "symbol": "symbol-color.svg",
+      "lockup": "horizontal.svg",
+      "symbol_on_tile": "bewerbungen-white.svg",
+      "idea": "Drei Stationen auf einem steigenden Weg – erledigt, läuft, offen.",
+      "rationale": [
+        "Spiegelt den Verlauf der App: Beworben → Gespräch → Ergebnis",
+        "Der offene Ring ist der nächste Schritt – motivierend statt abgeschlossen",
+        "Kompakte Perlen statt langer Linie: liest sich bei 16 px als Zeichen"
+      ]
+    }
+  ],
+  "recommendation": "Etappen – einfach, eigenständig und direkt aus der Logik der App abgeleitet.",
+  "next_steps": ["Logo ist in der App eingebaut", "Optional: Farbverlauf der Stationen nach Status", "Optional: Social-Preview-Bild"]
+}

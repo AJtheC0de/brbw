@@ -7,6 +7,15 @@
   const SEED_FIX_KEY = "bwrb.seedFix";
   const SEED_FIX_VERSION = "2";
   const SEED_URL = "data/bewerbungen.csv";
+  const VIEW_KEY = "bwrb.view";
+  const SUPABASE_URL = "https://coxmnerqoaclawbbgipx.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_2oKHLoM5fCrNiQ1FCpvPig_0Ci3zISR";
+  const db = window.supabase?.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  });
+  let currentUser = null;
+  let syncTimer = null;
+  let syncGeneration = 0;
 
   // Ergebnis (outcome) – how it ended / where it stands
   const STATUSES = [
@@ -50,6 +59,7 @@
     mail: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 7l9 6 9-6"/></svg>',
     briefcase: '<svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="3"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>',
     flag: '<svg viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>',
+    download: '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2"/></svg>',
   };
 
   /* ---------- Helpers ---------- */
@@ -61,13 +71,19 @@
   function parseDate(str) {
     if (!str) return "";
     str = String(str).trim();
+    let iso = "";
     let m = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
     if (m) {
       const y = m[3].length === 2 ? "20" + m[3] : m[3];
-      return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+      iso = `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    } else {
+      m = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) iso = `${m[1]}-${m[2]}-${m[3]}`;
     }
-    m = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+    if (!iso) return "";
+    const [y, mo, d] = iso.split("-").map(Number);
+    const test = new Date(Date.UTC(y, mo - 1, d));
+    return test.getUTCFullYear() === y && test.getUTCMonth() === mo - 1 && test.getUTCDate() === d ? iso : "";
   }
   function fmtDate(iso) {
     if (!iso) return "";
@@ -127,13 +143,67 @@
   /* ---------- Storage ---------- */
   function load() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(currentUser ? `${STORAGE_KEY}.${currentUser.id}` : STORAGE_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch { return null; }
   }
   function persist() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.apps)); }
+    try { localStorage.setItem(`${STORAGE_KEY}.${currentUser?.id || "local"}`, JSON.stringify(state.apps)); }
     catch { toast("Speichern im Browser nicht möglich – bitte Backup exportieren"); }
+    if (!currentUser) return;
+    clearTimeout(syncTimer);
+    const generation = ++syncGeneration;
+    setSyncState("syncing", "Speichert…");
+    syncTimer = setTimeout(() => syncRemote(generation), 350);
+  }
+
+  function setSyncState(kind, label) {
+    const el = document.querySelector("#syncState");
+    if (!el) return;
+    el.className = `sync-state ${kind || ""}`;
+    el.querySelector("span").textContent = label;
+    el.title = label;
+  }
+
+  function toRow(a) {
+    return {
+      id: String(a.id), user_id: currentUser.id, firma: a.firma, stelle: a.stelle || "",
+      datum: a.datum || null, status: a.status, phase: a.phase,
+      phase_dates: a.phaseDates || {}, entscheid_am: a.absageAm || null,
+      links: a.links || [], notes: a.notes || [], updated_at: Number(a.updated || Date.now()),
+    };
+  }
+
+  function fromRow(row) {
+    return normalize({
+      id: row.id, firma: row.firma, stelle: row.stelle, datum: row.datum,
+      status: row.status, phase: row.phase, phaseDates: row.phase_dates,
+      absageAm: row.entscheid_am, links: row.links, notes: row.notes, updated: row.updated_at,
+    });
+  }
+
+  async function syncRemote(generation) {
+    if (!currentUser || generation !== syncGeneration) return;
+    try {
+      const rows = state.apps.map(toRow);
+      if (rows.length) {
+        const { error } = await db.from("applications").upsert(rows, { onConflict: "id" });
+        if (error) throw error;
+      }
+      const { data: existing, error: readError } = await db.from("applications").select("id");
+      if (readError) throw readError;
+      const keep = new Set(rows.map((r) => r.id));
+      const removed = (existing || []).map((r) => r.id).filter((id) => !keep.has(id));
+      if (removed.length) {
+        const { error } = await db.from("applications").delete().in("id", removed);
+        if (error) throw error;
+      }
+      if (generation === syncGeneration) setSyncState("", "Gespeichert");
+    } catch (error) {
+      console.error("Supabase sync failed", error);
+      setSyncState("error", "Nicht synchronisiert");
+      toast(error.code === "42P01" ? "Supabase ist noch nicht eingerichtet" : "Cloud-Speicherung fehlgeschlagen");
+    }
   }
 
   /* ---------- CSV ---------- */
@@ -160,23 +230,44 @@
     return rows.filter((r) => r.some((v) => v.trim() !== ""));
   }
 
-  function appsFromCSV(text) {
+  function inspectCSV(text) {
     const rows = parseCSV(text);
-    if (!rows.length) return [];
+    if (!rows.length) return { apps: [], errors: ["Die Datei ist leer."], total: 0 };
     const head = rows[0].map((h) => h.toLowerCase().trim());
-    const col = (...names) => head.findIndex((h) => names.some((n) => h.includes(n)));
-    const iDate = col("bewerbung", "datum", "eingang");
+    const col = (...names) => head.findIndex((h) => names.includes(h));
+    const iDate = col("bewerbung / eingang", "bewerbung", "bewerbungsdatum", "datum", "eingang");
     const iFirma = col("firma", "unternehmen", "company");
     const iStelle = col("stelle", "position", "job");
     const iStatus = col("status");
     const iPhase = col("verlauf", "phase");
-    const iAbsage = col("absage am", "entscheid");
+    const iAbsage = col("absage am", "entscheid", "entscheid am");
     const iProofIn = head.findIndex((h) => h.includes("nachweis eingang") || h.includes("bestätigung"));
     const iProofOut = head.findIndex((h) => h.includes("nachweis outcome") || h.includes("outcome"));
-    const iNote = col("bemerkung", "notiz", "notes");
+    const iNote = col("bemerkung", "notiz", "notizen", "notes");
 
-    return rows.slice(1).map((r) => {
+    if (iFirma < 0) return { apps: [], errors: ['Die Pflichtspalte „Firma“ fehlt.'], total: Math.max(0, rows.length - 1) };
+
+    const apps = [], errors = [];
+    rows.slice(1).forEach((r, index) => {
       const get = (i) => (i >= 0 ? (r[i] || "").trim() : "");
+      const rowNo = index + 2;
+      const firma = get(iFirma);
+      const dateRaw = get(iDate), decisionRaw = get(iAbsage), statusRaw = get(iStatus), phaseRaw = get(iPhase);
+      const rowErrors = [];
+      if (!firma) rowErrors.push("Firma fehlt");
+      if (dateRaw && !parseDate(dateRaw)) rowErrors.push("Bewerbungsdatum ist ungültig");
+      if (decisionRaw && !parseDate(decisionRaw)) rowErrors.push("Entscheiddatum ist ungültig");
+      if (phaseRaw && !phaseFromText(phaseRaw)) rowErrors.push(`Verlauf „${phaseRaw}“ ist unbekannt`);
+      if (statusRaw) {
+        const s = statusRaw.toLowerCase();
+        const known = STATUS[s] || s.startsWith("absage") || s.includes("keine") || s.includes("zurück")
+          || s.includes("angebot") || s.includes("zusage") || s.includes("einladung") || s.includes("interview") || s.includes("gespräch");
+        if (!known) rowErrors.push(`Status „${statusRaw}“ ist unbekannt`);
+      }
+      if (rowErrors.length) {
+        errors.push(`Zeile ${rowNo}: ${rowErrors.join(", ")}`);
+        return;
+      }
       const parsed = parseStatusText(get(iStatus));
       const status = parsed.status;
       const datum = parseDate(get(iDate));
@@ -191,9 +282,9 @@
       if (get(iNote)) {
         get(iNote).split(" | ").forEach((t) => t.trim() && notes.push({ id: uid(), text: t.trim(), date: datum || todayISO() }));
       }
-      return {
+      apps.push({
         id: uid(),
-        firma: get(iFirma),
+        firma,
         stelle: get(iStelle),
         datum,
         status,
@@ -202,8 +293,14 @@
         absageAm: parseDate(get(iAbsage)),
         links, notes,
         updated: Date.now(),
-      };
-    }).filter((a) => a.firma);
+      });
+    });
+    if (!rows.slice(1).length) errors.push("Die Datei enthält keine Datenzeilen.");
+    return { apps, errors, total: Math.max(0, rows.length - 1) };
+  }
+
+  function appsFromCSV(text) {
+    return inspectCSV(text).apps;
   }
 
   function appsToCSV(apps) {
@@ -239,6 +336,7 @@
     draft: null,
     draftOriginal: "",
     isNew: false,
+    view: "list",
     openMonths: new Set((() => { try { return JSON.parse(localStorage.getItem(OPEN_KEY)) || []; } catch { return []; } })()),
   };
 
@@ -426,16 +524,19 @@
       const by = STATUSES.map((s) => ({ ...s, n: list.filter((a) => a.status === s.id).length })).filter((s) => s.n);
       html += `
         <section class="month ${open ? "open" : ""}" data-month="${key}" style="--i:${gi++}">
-          <button class="month-head" aria-expanded="${open}">
-            <div class="month-cal"><b>${name.slice(0, 3)}</b><small>${year}</small></div>
-            <div class="month-info">
-              <h3>${name} ${year}</h3>
-              <div class="month-stats">${by.map((s) => `<span style="--c:${s.color}"><i></i>${s.n} ${s.label}</span>`).join("")}${(() => { const n = list.filter(hadInterview).length; return n ? `<span class="talks" style="--c:var(--s-phase)"><i></i>${n} mit Gespräch</span>` : ""; })()}</div>
-              <div class="month-bar">${by.map((s) => `<span style="--c:${s.color};flex:${s.n};--i:${gi}"></span>`).join("")}</div>
-            </div>
-            <div class="month-count"><b>${list.length}</b><small>${list.length === 1 ? "Bewerbung" : "Bewerbungen"}</small></div>
-            <span class="chev"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
-          </button>
+          <div class="month-head-row">
+            <button class="month-head" aria-expanded="${open}">
+              <div class="month-cal"><b>${name.slice(0, 3)}</b><small>${year}</small></div>
+              <div class="month-info">
+                <h3>${name} ${year}</h3>
+                <div class="month-stats">${by.map((s) => `<span style="--c:${s.color}"><i></i>${s.n} ${s.label}</span>`).join("")}${(() => { const n = list.filter(hadInterview).length; return n ? `<span class="talks" style="--c:var(--s-phase)"><i></i>${n} mit Gespräch</span>` : ""; })()}</div>
+                <div class="month-bar">${by.map((s) => `<span style="--c:${s.color};flex:${s.n};--i:${gi}"></span>`).join("")}</div>
+              </div>
+              <div class="month-count"><b>${list.length}</b><small>${list.length === 1 ? "Bewerbung" : "Bewerbungen"}</small></div>
+              <span class="chev"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+            </button>
+            <button class="month-export" data-export-month="${key}" aria-label="${name} ${year} als CSV exportieren" title="${name} ${year} als CSV exportieren">${ICONS.download}</button>
+          </div>
           <div class="month-body"><div class="month-inner"><div class="month-cards">
             ${list.map(cardHTML).join("")}
           </div></div></div>
@@ -464,8 +565,382 @@
     }, 300);
   }
 
+  function exportMonth(key) {
+    const apps = state.apps.filter((a) => key === "none" ? !a.datum : a.datum?.slice(0, 7) === key);
+    if (!apps.length) return toast("Keine Bewerbungen in diesem Monat");
+    const label = key === "none" ? "ohne-datum" : key;
+    download(`bewerbungen-${label}.csv`, appsToCSV(apps), "text/csv;charset=utf-8");
+    const name = key === "none" ? "Ohne Datum" : `${MONTHS[+key.slice(5, 7) - 1]} ${key.slice(0, 4)}`;
+    toast(`${name} als CSV exportiert`);
+  }
+
+  /* ---------- Statistiken ---------- */
+  const DAY = 86400000;
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const isoOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const toDate = (iso) => new Date(iso + "T00:00:00");
+  const diffDays = (from, to) => Math.round((toDate(to) - toDate(from)) / DAY);
+  const pctOf = (n, total) => (total ? Math.round((n / total) * 100) : 0);
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  function median(arr) {
+    if (!arr.length) return null;
+    const s = [...arr].sort((a, b) => a - b), m = s.length >> 1;
+    return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+  }
+  function quantile(arr, q) {
+    if (!arr.length) return null;
+    const s = [...arr].sort((a, b) => a - b);
+    return s[Math.min(s.length - 1, Math.max(0, Math.ceil(q * s.length) - 1))];
+  }
+  function mondayOf(iso) {
+    const d = toDate(iso);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return d;
+  }
+  function isoWeek(date) {
+    const t = new Date(date);
+    t.setDate(t.getDate() + 3 - ((t.getDay() + 6) % 7));
+    const jan4 = new Date(t.getFullYear(), 0, 4);
+    return 1 + Math.round(((t - jan4) / DAY - 3 + ((jan4.getDay() + 6) % 7)) / 7);
+  }
+  // "Customer Success Manager (m/w/d) 100% Remote" and "CSM" land in the same group
+  function cleanRole(s) {
+    return String(s || "")
+      .replace(/\((?:[mwdafx])(?:\s*\/\s*[mwdafx])*\)/gi, "")
+      .replace(/\d+\s*%?\s*[–-]\s*\d+\s*%|\d+\s*%/g, "")
+      .replace(/\bremote\b/gi, "")
+      .replace(/\s+/g, " ").trim();
+  }
+  const ROLE_ALIASES = { csm: "Customer Success Manager" };
+
+  const BUCKETS = [
+    { max: 7, label: "≤ 1 Wo." },
+    { max: 14, label: "1–2 Wo." },
+    { max: 30, label: "2–4 Wo." },
+    { max: 60, label: "1–2 Mon." },
+    { max: Infinity, label: "> 2 Mon." },
+  ];
+  const bucketize = (days) => BUCKETS.map((b, i) => ({
+    label: b.label,
+    n: days.filter((d) => d <= b.max && d > (i ? BUCKETS[i - 1].max : -1)).length,
+  }));
+
+  function computeInsights(apps) {
+    const today = todayISO();
+    const total = apps.length;
+    const dated = apps.filter((a) => a.datum);
+    const by = Object.fromEntries(STATUSES.map((s) => [s.id, 0]));
+    apps.forEach((a) => by[a.status]++);
+    const gotAnswer = (a) => (a.status !== "offen" && a.status !== "keine") || hadInterview(a);
+    const answered = apps.filter(gotAnswer).length;
+    const reached = PHASES.map((_, i) => apps.filter((a) => phaseIdx(a.phase) >= i).length);
+
+    // first reaction = invitation or decision, whichever came first
+    const reactions = [];
+    for (const a of dated) {
+      const days = [a.phaseDates?.gespraech1, a.absageAm].filter(Boolean).map((d) => diffDays(a.datum, d)).filter((n) => n >= 0);
+      if (days.length) reactions.push(Math.min(...days));
+    }
+    const rMedian = median(reactions), rP80 = quantile(reactions, 0.8);
+    // after this many days without reaction an answer becomes unlikely
+    const threshold = reactions.length >= 5 ? Math.max(14, rP80) : 21;
+
+    const waiting = dated.filter((a) => a.status === "offen" && !hadInterview(a)).map((a) => ({ a, days: daysSince(a.datum) }));
+    const overdue = waiting.filter((w) => w.days > threshold).sort((x, y) => y.days - x.days);
+    const running = apps.filter((a) => a.status === "offen" && hadInterview(a))
+      .sort((x, y) => phaseIdx(y.phase) - phaseIdx(x.phase) || (x.datum || "").localeCompare(y.datum || ""));
+
+    const WEEKS = 12;
+    const thisMonday = mondayOf(today);
+    const weeks = Array.from({ length: WEEKS }, (_, i) => {
+      const start = new Date(thisMonday);
+      start.setDate(start.getDate() - (WEEKS - 1 - i) * 7);
+      return { start, n: 0 };
+    });
+    for (const a of dated) {
+      const i = WEEKS - 1 - Math.round((thisMonday - mondayOf(a.datum)) / (7 * DAY));
+      if (i >= 0 && i < WEEKS) weeks[i].n++;
+    }
+    const first = dated.reduce((m, a) => (!m || a.datum < m ? a.datum : m), "");
+    const spanWeeks = first ? Math.max(1, (diffDays(first, today) + 1) / 7) : 1;
+    const perWeek = dated.length / spanWeeks;
+
+    const months = new Map();
+    for (const a of dated) months.set(a.datum.slice(0, 7), (months.get(a.datum.slice(0, 7)) || 0) + 1);
+    const topMonth = [...months].sort((x, y) => y[1] - x[1])[0];
+
+    const currentMonthKey = today.slice(0, 7);
+    const previousMonthDate = new Date(`${currentMonthKey}-01T00:00:00`);
+    previousMonthDate.setMonth(previousMonthDate.getMonth() - 1);
+    const previousMonthKey = isoOf(previousMonthDate).slice(0, 7);
+    const summarizeMonth = (key) => {
+      const list = dated.filter((a) => a.datum.slice(0, 7) === key);
+      const status = Object.fromEntries(STATUSES.map((st) => [st.id, list.filter((a) => a.status === st.id).length]));
+      return {
+        key, total: list.length, status,
+        answered: list.filter(gotAnswer).length,
+        talks: list.filter(hadInterview).length,
+      };
+    };
+    const monthCurrent = summarizeMonth(currentMonthKey);
+    const monthPrevious = summarizeMonth(previousMonthKey);
+
+    const roles = new Map();
+    for (const a of apps) {
+      const cleaned = cleanRole(a.stelle);
+      if (!cleaned) continue;
+      const alias = ROLE_ALIASES[cleaned.toLowerCase()];
+      const key = (alias || cleaned).toLowerCase();
+      const r = roles.get(key) || roles.set(key, { label: alias || cleaned, n: 0, answered: 0, talks: 0, absage: 0 }).get(key);
+      r.n++;
+      if (gotAnswer(a)) r.answered++;
+      if (hadInterview(a)) r.talks++;
+      if (a.status === "absage") r.absage++;
+    }
+    const roleList = [...roles.values()].sort((x, y) => y.n - x.n || x.label.localeCompare(y.label));
+
+    const decided = apps.filter((a) => a.status === "absage");
+    const absageAfterTalk = decided.filter(hadInterview).length;
+
+    return {
+      total, by, answered, reached, reactions, rMedian, rP80, threshold, waiting, overdue, running,
+      weeks, perWeek, first, topMonth, roleList, absageAfterTalk, monthCurrent, monthPrevious,
+    };
+  }
+
+  function insightHighlights(s) {
+    const out = [];
+    const thisWeek = s.weeks[s.weeks.length - 1].n;
+    if (s.first) {
+      const pace = s.perWeek.toLocaleString("de-CH", { maximumFractionDigits: 1 });
+      out.push({ c: "var(--accent)", t: `Du bewirbst dich im Schnitt <b>${pace}× pro Woche</b>${thisWeek ? ` – diese Woche schon <b>${thisWeek}</b>` : " – diese Woche noch keine"}.` });
+    }
+    if (s.rMedian !== null) {
+      out.push({ c: STATUS.offen.color, t: `Antworten kommen meist nach <b>${plural(s.rMedian, "Tag", "Tagen")}</b>${s.reactions.length >= 5 ? `, 80 % innerhalb von <b>${s.rP80} Tagen</b>` : ""}.` });
+    }
+    if (s.overdue.length) {
+      out.push({ c: "var(--s-interview)", t: `<b>${plural(s.overdue.length, "Bewerbung wartet", "Bewerbungen warten")}</b> seit über ${s.threshold} Tagen ohne Reaktion – nachfassen oder als „Keine Antwort“ abhaken.` });
+    }
+    if (s.reached[1]) {
+      out.push({ c: "var(--s-phase)", t: `<b>${pctOf(s.reached[1], s.total)} %</b> deiner Bewerbungen führen zu einem Gespräch${s.absageAfterTalk ? ` · ${plural(s.absageAfterTalk, "Absage", "Absagen")} kam${s.absageAfterTalk === 1 ? "" : "en"} nach einem Gespräch` : ""}.` });
+    } else if (s.total) {
+      out.push({ c: "var(--s-phase)", t: "Noch kein Gespräch erfasst. Trag Einladungen im <b>Verlauf</b> ein, dann siehst du hier deine Einladungsquote." });
+    }
+    const best = s.roleList.filter((r) => r.n >= 3).sort((x, y) => y.answered / y.n - x.answered / x.n)[0];
+    if (best && best.answered) {
+      out.push({ c: STATUS.angebot.color, t: `Am meisten Rückmeldung bei <b>${esc(best.label)}</b>: ${pctOf(best.answered, best.n)} % von ${best.n} Bewerbungen.` });
+    }
+    if (s.topMonth) {
+      const [key, n] = s.topMonth;
+      out.push({ c: "var(--text-3)", t: `Aktivster Monat: <b>${MONTHS[+key.slice(5, 7) - 1]} ${key.slice(0, 4)}</b> mit ${n} Bewerbungen.` });
+    }
+    return out;
+  }
+
+  // vertical bars; only the max and the highlighted bar carry a value label
+  function columnsHTML(items, { highlight = -1, color = "var(--accent)" } = {}) {
+    const max = Math.max(1, ...items.map((it) => it.n));
+    const maxIdx = items.findIndex((it) => it.n === max);
+    return `
+      <div class="cols" style="--c:${color}">
+        ${items.map((it, i) => `
+          <div class="col ${i === highlight ? "hl" : ""}" data-tip="${esc(it.tip || `${it.label}: ${it.n}`)}">
+            <div class="col-track">
+              ${(i === maxIdx || i === highlight) && it.n ? `<span class="col-val">${it.n}</span>` : ""}
+              <span class="col-bar" style="--h:${(it.n / max) * 100}%;--i:${i}"></span>
+            </div>
+            <span class="col-label">${esc(it.axis ?? it.label)}</span>
+          </div>`).join("")}
+      </div>`;
+  }
+
+  function miniRowHTML(a, side) {
+    return `
+      <button class="mini-row" data-open-id="${a.id}">
+        <span class="avatar sm" style="--h:${hue(a.firma)}">${esc(initials(a.firma))}</span>
+        <span class="mini-main"><b>${esc(a.firma)}</b><small>${esc(a.stelle || "—")}</small></span>
+        <span class="mini-side">${side}</span>
+      </button>`;
+  }
+
+  function renderInsights() {
+    const el = $("#viewInsights");
+    const s = computeInsights(state.apps);
+    if (!s.total) {
+      el.innerHTML = `
+        <div class="empty">
+          <div class="empty-icon">${ICONS.flag}</div>
+          <h3>Noch keine Daten</h3>
+          <p class="muted">Sobald du Bewerbungen erfasst hast, siehst du hier deine Auswertung.</p>
+        </div>`;
+      return;
+    }
+    const pace = s.perWeek.toLocaleString("de-CH", { maximumFractionDigits: 1 });
+    const thisWeek = s.weeks[s.weeks.length - 1].n;
+    const kpis = [
+      { label: "Antwortquote", value: `${pctOf(s.answered, s.total)} %`, sub: `${s.answered} von ${s.total} haben reagiert`, c: STATUS.offen.color },
+      { label: "Einladungsquote", value: `${pctOf(s.reached[1], s.total)} %`, sub: plural(s.reached[1], "Bewerbung mit Gespräch", "Bewerbungen mit Gespräch"), c: "var(--s-phase)" },
+      { label: "Pro Woche", value: pace, sub: `diese Woche ${thisWeek}`, c: "var(--accent)" },
+      { label: "Reaktionszeit", value: s.rMedian === null ? "–" : `${s.rMedian} T.`, sub: s.reactions.length ? `Median aus ${plural(s.reactions.length, "Antwort", "Antworten")}` : "noch keine Antwortdaten", c: STATUS.angebot.color },
+    ];
+
+    const funnelSteps = [
+      { label: "Beworben", n: s.total },
+      { label: "Antwort erhalten", n: s.answered },
+      ...PHASES.slice(1).map((p, i) => ({ label: p.label, n: s.reached[i + 1] })),
+      { label: "Angebot", n: s.by.angebot },
+    ];
+    const funnel = funnelSteps.map((st, i) => {
+      const prev = i ? funnelSteps[i - 1].n : st.n;
+      const tip = i ? `${st.label}: ${st.n} · ${pctOf(st.n, prev)} % vom Schritt davor` : `${st.label}: ${st.n}`;
+      return `
+        <div class="f-row" data-tip="${esc(tip)}" style="--i:${i}">
+          <span class="f-label">${st.label}</span>
+          <span class="f-track"><span class="f-bar" style="--w:${pctOf(st.n, s.total)}%"></span></span>
+          <span class="f-val"><b>${st.n}</b><small>${pctOf(st.n, s.total)} %</small></span>
+        </div>`;
+    }).join("");
+
+    const weekItems = s.weeks.map((w, i) => {
+      const end = new Date(w.start); end.setDate(end.getDate() + 6);
+      const kw = isoWeek(w.start);
+      return {
+        label: `KW ${kw}`, axis: i % 2 === s.weeks.length % 2 ? "" : String(kw), n: w.n,
+        tip: `KW ${kw} · ${fmtDate(isoOf(w.start)).slice(0, 6)}–${fmtDate(isoOf(end)).slice(0, 6)} · ${plural(w.n, "Bewerbung", "Bewerbungen")}`,
+      };
+    });
+    const reactItems = bucketize(s.reactions).map((b) => ({ ...b, tip: `${b.label}: ${plural(b.n, "Antwort", "Antworten")}` }));
+    const waitItems = bucketize(s.waiting.map((w) => w.days)).map((b) => ({ ...b, tip: `${b.label}: ${plural(b.n, "Bewerbung", "Bewerbungen")} ohne Reaktion` }));
+
+    const SHOW = 6;
+    const overdueHTML = s.overdue.length
+      ? s.overdue.slice(0, SHOW).map((w) => miniRowHTML(w.a, `<span class="age-chip">${w.days} T.</span>`)).join("")
+        + (s.overdue.length > SHOW ? `<p class="muted small more">und ${s.overdue.length - SHOW} weitere</p>` : "")
+      : `<div class="empty-mini">Nichts überfällig – alle offenen Bewerbungen sind jünger als ${s.threshold} Tage.</div>`;
+    const runningHTML = s.running.length
+      ? s.running.map((a) => miniRowHTML(a, phaseTagHTML(a))).join("")
+      : `<div class="empty-mini">Gerade kein laufendes Gespräch. Einladungen trägst du im Verlauf einer Bewerbung ein.</div>`;
+
+    const roles = s.roleList.slice(0, 8);
+    const rolesHTML = `
+      <table class="roles">
+        <thead><tr><th>Stelle</th><th>Anzahl</th><th>Antwort</th><th class="hide-sm">Gespräch</th><th class="hide-sm">Absage</th></tr></thead>
+        <tbody>
+          ${roles.map((r) => `
+            <tr>
+              <td><span class="role-name">${esc(r.label)}</span><span class="role-bar" style="--w:${pctOf(r.n, roles[0].n)}%"></span></td>
+              <td>${r.n}</td>
+              <td>${pctOf(r.answered, r.n)} %</td>
+              <td class="hide-sm">${r.talks}</td>
+              <td class="hide-sm">${r.absage}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>`;
+
+    const month = s.monthCurrent, previousMonth = s.monthPrevious;
+    const monthName = `${MONTHS[+month.key.slice(5, 7) - 1]} ${month.key.slice(0, 4)}`;
+    const previousMonthName = MONTHS[+previousMonth.key.slice(5, 7) - 1];
+    const monthDelta = month.total - previousMonth.total;
+    const deltaText = monthDelta === 0
+      ? `gleich viele wie im ${previousMonthName}`
+      : `${monthDelta > 0 ? "+" : ""}${monthDelta} gegenüber ${previousMonthName}`;
+    const monthMetrics = [
+      { label: "Bewerbungen", value: month.total, sub: `${previousMonth.total} im ${previousMonthName}`, c: "var(--accent)" },
+      { label: "Offen", value: month.status.offen, sub: `${pctOf(month.status.offen, month.total)} % des Monats`, c: STATUS.offen.color },
+      { label: "Antwort erhalten", value: month.answered, sub: `${pctOf(month.answered, month.total)} % Antwortquote`, c: STATUS.angebot.color },
+      { label: "Mit Gespräch", value: month.talks, sub: `${pctOf(month.talks, month.total)} % Einladungsquote`, c: "var(--s-phase)" },
+    ];
+    const monthStatuses = STATUSES.map((st) => ({ ...st, n: month.status[st.id] })).filter((st) => st.n);
+    const monthStatusBar = month.total ? monthStatuses.map((st) => `<span style="--c:${st.color};flex:${st.n}" title="${st.label}: ${st.n}"></span>`).join("") : "";
+
+    el.innerHTML = `
+      <div class="stats ins-kpis">
+        ${kpis.map((k, i) => `
+          <div class="stat" style="--i:${i};--c:${k.c}">
+            <div class="stat-label"><i></i>${k.label}</div>
+            <div class="stat-value">${k.value}</div>
+            <div class="stat-sub">${k.sub}</div>
+          </div>`).join("")}
+      </div>
+
+      <section class="panel highlights" style="--i:1">
+        <h3>Auf einen Blick</h3>
+        <ul>${insightHighlights(s).map((h) => `<li style="--c:${h.c}"><i></i><span>${h.t}</span></li>`).join("")}</ul>
+      </section>
+
+      <section class="panel month-snapshot" style="--i:2">
+        <div class="snapshot-head">
+          <div><h3>${monthName}</h3><span class="muted small">Aktueller Monat im Vergleich zu ${previousMonthName}</span></div>
+          <span class="month-delta ${monthDelta > 0 ? "up" : monthDelta < 0 ? "down" : ""}">${esc(deltaText)}</span>
+        </div>
+        ${month.total ? `
+          <div class="snapshot-grid">
+            ${monthMetrics.map((m) => `
+              <div class="snapshot-metric" style="--c:${m.c}">
+                <span>${m.label}</span><b>${m.value}</b><small>${m.sub}</small>
+              </div>`).join("")}
+          </div>
+          <div class="snapshot-status">
+            <div class="snapshot-bar">${monthStatusBar}</div>
+            <div class="snapshot-legend">${monthStatuses.map((st) => `<span style="--c:${st.color}"><i></i>${st.n} ${st.label}</span>`).join("")}</div>
+          </div>` : `<div class="empty-mini">Für ${monthName} sind noch keine Bewerbungen erfasst.</div>`}
+      </section>
+
+      <div class="ins-grid">
+        <section class="panel" style="--i:3">
+          <div class="panel-head"><h3>Trichter</h3><span class="muted small">Wie weit kommen deine Bewerbungen?</span></div>
+          <div class="funnel">${funnel}</div>
+        </section>
+
+        <section class="panel" style="--i:4">
+          <div class="panel-head"><h3>Aktivität</h3><span class="muted small">Bewerbungen pro Woche · letzte 12 Wochen</span></div>
+          ${columnsHTML(weekItems, { highlight: weekItems.length - 1 })}
+          <p class="panel-foot muted small">Kalenderwoche · aktuelle Woche hervorgehoben</p>
+        </section>
+
+        <section class="panel" style="--i:5">
+          <div class="panel-head"><h3>Reaktionszeit</h3><span class="muted small">Tage bis zur ersten Antwort (Einladung oder Entscheid)</span></div>
+          ${s.reactions.length ? columnsHTML(reactItems, { color: STATUS.angebot.color }) : `<div class="empty-mini">Noch keine Daten – trag bei Absagen das Entscheid-Datum ein.</div>`}
+        </section>
+
+        <section class="panel" style="--i:6">
+          <div class="panel-head"><h3>Warten auf Antwort</h3><span class="muted small">${plural(s.waiting.length, "offene Bewerbung", "offene Bewerbungen")} ohne Gespräch, nach Alter</span></div>
+          ${s.waiting.length ? columnsHTML(waitItems, { color: STATUS.offen.color }) : `<div class="empty-mini">Keine offenen Bewerbungen.</div>`}
+        </section>
+
+        <section class="panel" style="--i:7">
+          <div class="panel-head"><h3>Nachfassen</h3><span class="muted small">Offen und älter als ${s.threshold} Tage${s.reactions.length >= 5 ? " (80 % der Antworten kamen früher)" : ""}</span></div>
+          <div class="mini-list">${overdueHTML}</div>
+        </section>
+
+        <section class="panel" style="--i:8">
+          <div class="panel-head"><h3>Laufende Gespräche</h3><span class="muted small">Offen mit mindestens einem Gespräch</span></div>
+          <div class="mini-list">${runningHTML}</div>
+        </section>
+
+        <section class="panel wide" style="--i:9">
+          <div class="panel-head"><h3>Nach Stelle</h3><span class="muted small">Welche Jobtitel bringen Rückmeldung?</span></div>
+          ${rolesHTML}
+        </section>
+      </div>`;
+  }
+
+  function setView(view) {
+    state.view = view;
+    try { localStorage.setItem(VIEW_KEY, view); } catch {}
+    history.replaceState(null, "", view === "insights" ? "#statistiken" : location.pathname + location.search);
+    $("#viewList").hidden = view !== "list";
+    $("#viewInsights").hidden = view !== "insights";
+    document.querySelectorAll("#tabs .tab").forEach((t) => {
+      const on = t.dataset.view === view;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", on);
+    });
+    if (view === "insights") renderInsights();
+  }
+
   function render({ transition = false } = {}) {
-    const run = () => { renderStats(); renderFilters(); renderList(); };
+    const run = () => { renderStats(); renderFilters(); renderList(); if (state.view === "insights") renderInsights(); };
     if (transition && document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
       document.startViewTransition(run);
     } else run();
@@ -704,32 +1179,105 @@
   }
 
   /* ---------- Import / Export ---------- */
-  function importFile(file) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result);
-      try {
-        if (file.name.toLowerCase().endsWith(".json") || text.trim().startsWith("[")) {
-          const data = JSON.parse(text);
-          if (!Array.isArray(data)) throw new Error("Ungültiges Format");
-          if (state.apps.length && !confirm(`Backup mit ${data.length} Einträgen laden? Aktuelle Daten werden ersetzt.`)) return;
-          state.apps = data.map(normalize);
-          toast(`${data.length} Bewerbungen geladen`);
-        } else {
-          const incoming = appsFromCSV(text);
-          const key = (a) => `${a.firma.toLowerCase()}|${a.stelle.toLowerCase()}|${a.datum}`;
-          const existing = new Set(state.apps.map(key));
-          const fresh = incoming.filter((a) => !existing.has(key(a)));
-          state.apps.push(...fresh);
-          toast(`${fresh.length} neue importiert${incoming.length - fresh.length ? `, ${incoming.length - fresh.length} Duplikate übersprungen` : ""}`);
-        }
-        persist();
-        render({ transition: true });
-      } catch (e) {
-        toast("Datei konnte nicht gelesen werden");
+  const importDialog = $("#importDialog"), importOverlay = $("#importOverlay"), importResult = $("#importResult");
+  const confirmImportBtn = $("#confirmImportBtn"), dropZone = $("#dropZone");
+  let pendingImport = null, importLastFocus = null;
+
+  function openImportDialog() {
+    importLastFocus = document.activeElement;
+    pendingImport = null;
+    importResult.hidden = true;
+    importResult.innerHTML = "";
+    confirmImportBtn.disabled = true;
+    confirmImportBtn.textContent = "Importieren";
+    importOverlay.hidden = false;
+    importDialog.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    requestAnimationFrame(() => { importOverlay.classList.add("show"); importDialog.classList.add("open"); });
+    setTimeout(() => dropZone.focus({ preventScroll: true }), 100);
+  }
+
+  function closeImportDialog() {
+    if (!importDialog.classList.contains("open")) return;
+    importDialog.classList.remove("open");
+    importOverlay.classList.remove("show");
+    importDialog.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = drawer.classList.contains("open") ? "hidden" : "";
+    setTimeout(() => { if (!importDialog.classList.contains("open")) importOverlay.hidden = true; }, 300);
+    importLastFocus?.focus?.({ preventScroll: true });
+  }
+
+  function showImportResult({ file, type = "", apps = [], errors = [], total = 0, fatal = false }) {
+    const valid = apps.length;
+    const isJSON = type === "json";
+    const canImport = valid > 0 && !(isJSON && errors.length) && !fatal;
+    pendingImport = canImport ? { type, apps } : null;
+    confirmImportBtn.disabled = !canImport;
+    confirmImportBtn.textContent = isJSON ? "Backup wiederherstellen" : `${valid} ${valid === 1 ? "Eintrag" : "Einträge"} importieren`;
+    const status = fatal || !canImport ? "error" : "ok";
+    const summary = fatal
+      ? "Diese Datei kann nicht importiert werden."
+      : isJSON
+        ? `${valid} ${valid === 1 ? "Bewerbung" : "Bewerbungen"} im Backup erkannt${errors.length ? " · Backup muss vollständig gültig sein" : ""}.`
+        : `${valid} von ${total} ${total === 1 ? "Datenzeile ist" : "Datenzeilen sind"} gültig${errors.length ? ` · ${errors.length} werden übersprungen` : ""}.`;
+    importResult.className = `import-result ${status}`;
+    importResult.innerHTML = `
+      <div class="result-head"><b>${esc(file?.name || "Datei")}</b><span>${isJSON ? "JSON-Backup" : "CSV-Import"}</span></div>
+      <p class="result-summary">${esc(summary)}</p>
+      ${errors.length ? `<ul class="result-errors">${errors.slice(0, 6).map((e) => `<li>${esc(e)}</li>`).join("")}${errors.length > 6 ? `<li>… und ${errors.length - 6} weitere Fehler</li>` : ""}</ul>` : ""}`;
+    importResult.hidden = false;
+  }
+
+  async function inspectImportFile(file) {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showImportResult({ file, errors: ["Die Datei ist grösser als 5 MB."], fatal: true });
+      return;
+    }
+    try {
+      const text = await file.text();
+      const lower = file.name.toLowerCase();
+      const isJSON = lower.endsWith(".json") || (!lower.endsWith(".csv") && text.trim().startsWith("["));
+      if (!isJSON && !lower.endsWith(".csv")) {
+        showImportResult({ file, errors: ["Erlaubt sind nur CSV- und JSON-Dateien."], fatal: true });
+        return;
       }
-    };
-    reader.readAsText(file);
+      if (isJSON) {
+        const data = JSON.parse(text);
+        if (!Array.isArray(data)) throw new Error("Das JSON-Backup muss eine Liste enthalten.");
+        const errors = [];
+        data.forEach((a, i) => {
+          if (!a || typeof a !== "object") errors.push(`Eintrag ${i + 1}: ungültiges Format`);
+          else if (!String(a.firma || "").trim()) errors.push(`Eintrag ${i + 1}: Firma fehlt`);
+        });
+        if (!data.length) errors.push("Das Backup enthält keine Bewerbungen.");
+        const validData = data.filter((a) => a && typeof a === "object" && String(a.firma || "").trim());
+        showImportResult({ file, type: "json", apps: validData.map(normalize), errors, total: data.length });
+      } else {
+        const result = inspectCSV(text);
+        showImportResult({ file, type: "csv", ...result });
+      }
+    } catch (e) {
+      showImportResult({ file, errors: [e.message || "Die Datei konnte nicht gelesen werden."], fatal: true });
+    }
+  }
+
+  function commitImport() {
+    if (!pendingImport) return;
+    if (pendingImport.type === "json") {
+      if (state.apps.length && !confirm(`Backup mit ${pendingImport.apps.length} Einträgen wiederherstellen? Die aktuellen Daten werden ersetzt.`)) return;
+      state.apps = pendingImport.apps;
+      persist(); render({ transition: true }); closeImportDialog();
+      toast(`${state.apps.length} Bewerbungen aus Backup geladen`);
+      return;
+    }
+    const key = (a) => `${a.firma.toLowerCase()}|${a.stelle.toLowerCase()}|${a.datum}`;
+    const existing = new Set(state.apps.map(key));
+    const fresh = pendingImport.apps.filter((a) => !existing.has(key(a)) && existing.add(key(a)));
+    const duplicates = pendingImport.apps.length - fresh.length;
+    state.apps.push(...fresh);
+    persist(); render({ transition: true }); closeImportDialog();
+    toast(`${fresh.length} neue importiert${duplicates ? `, ${duplicates} Duplikate übersprungen` : ""}`);
   }
 
   function normalize(a) {
@@ -771,17 +1319,21 @@
       case "export-json":
         download(`bewerbungen-backup-${stamp}.json`, JSON.stringify(state.apps, null, 2), "application/json");
         toast("Backup gespeichert"); break;
-      case "import": $("#fileInput").click(); break;
+      case "import": openImportDialog(); break;
       case "reset":
         if (confirm("Wirklich ALLE Bewerbungen löschen? Tipp: vorher ein Backup speichern.")) {
           state.apps = []; persist(); render({ transition: true }); toast("Alle Daten gelöscht");
         }
+        break;
+      case "signout":
+        db.auth.signOut();
         break;
     }
   }
 
   /* ---------- Events ---------- */
   $("#addBtn").addEventListener("click", () => openDrawer(null));
+  $("#importBtn").addEventListener("click", openImportDialog);
   menuBtn.addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("open"); });
   document.addEventListener("click", (e) => {
     if (!menu.contains(e.target)) closeMenu();
@@ -791,8 +1343,25 @@
 
   $("#fileInput").addEventListener("change", (e) => {
     const f = e.target.files[0];
-    if (f) importFile(f);
+    if (f) inspectImportFile(f);
     e.target.value = "";
+  });
+  dropZone.addEventListener("click", () => $("#fileInput").click());
+  ["dragenter", "dragover"].forEach((name) => dropZone.addEventListener(name, (e) => {
+    e.preventDefault();
+    dropZone.classList.add("dragging");
+  }));
+  ["dragleave", "drop"].forEach((name) => dropZone.addEventListener(name, (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("dragging");
+  }));
+  dropZone.addEventListener("drop", (e) => inspectImportFile(e.dataTransfer.files[0]));
+  importOverlay.addEventListener("click", closeImportDialog);
+  importDialog.addEventListener("click", (e) => { if (e.target.closest("[data-close-import]")) closeImportDialog(); });
+  confirmImportBtn.addEventListener("click", commitImport);
+  $("#templateBtn").addEventListener("click", () => {
+    download("bewerbungen-import-vorlage.csv", appsToCSV([]), "text/csv;charset=utf-8");
+    toast("CSV-Vorlage heruntergeladen");
   });
 
   els.filters.addEventListener("click", (e) => {
@@ -810,6 +1379,8 @@
   els.sort.addEventListener("change", () => { state.sort = els.sort.value; render({ transition: true }); });
 
   els.list.addEventListener("click", (e) => {
+    const monthExport = e.target.closest("[data-export-month]");
+    if (monthExport) return exportMonth(monthExport.dataset.exportMonth);
     const head = e.target.closest(".month-head");
     if (head) return toggleMonth(head.closest(".month"));
     if (e.target.closest("[data-toggle-all]")) {
@@ -824,6 +1395,37 @@
     const app = state.apps.find((a) => a.id === card.dataset.id);
     if (app) openDrawer(app);
   });
+
+  $("#tabs").addEventListener("click", (e) => {
+    const tab = e.target.closest("[data-view]");
+    if (tab && tab.dataset.view !== state.view) setView(tab.dataset.view);
+  });
+  $("#tabs").addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const next = state.view === "list" ? "insights" : "list";
+    setView(next);
+    $(`#tabs [data-view="${next}"]`).focus();
+  });
+
+  const insightsEl = $("#viewInsights"), tip = $("#tip");
+  insightsEl.addEventListener("click", (e) => {
+    const row = e.target.closest("[data-open-id]");
+    const app = row && state.apps.find((a) => a.id === row.dataset.openId);
+    if (app) openDrawer(app);
+  });
+  insightsEl.addEventListener("pointerover", (e) => {
+    const t = e.target.closest("[data-tip]");
+    if (!t) return;
+    tip.textContent = t.dataset.tip;
+    tip.hidden = false;
+    const r = t.getBoundingClientRect(), w = tip.offsetWidth;
+    tip.style.left = Math.min(innerWidth - w - 8, Math.max(8, r.left + r.width / 2 - w / 2)) + "px";
+    tip.style.top = Math.max(8, r.top - tip.offsetHeight - 8) + "px";
+  });
+  insightsEl.addEventListener("pointerout", (e) => {
+    if (!e.relatedTarget?.closest?.("[data-tip]")) tip.hidden = true;
+  });
+  addEventListener("scroll", () => (tip.hidden = true), { passive: true });
 
   overlay.addEventListener("click", () => closeDrawer());
   drawer.addEventListener("click", (e) => {
@@ -867,11 +1469,13 @@
 
   document.addEventListener("keydown", (e) => {
     const open = drawer.classList.contains("open");
-    if (e.key === "Escape") { if (open) closeDrawer(); else closeMenu(); return; }
+    const importOpen = importDialog.classList.contains("open");
+    if (e.key === "Escape") { if (importOpen) closeImportDialog(); else if (open) closeDrawer(); else closeMenu(); return; }
+    if (importOpen) return;
     if (open && e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveDraft(); return; }
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
     if (open || typing) return;
-    if (e.key === "/") { e.preventDefault(); els.search.focus(); }
+    if (e.key === "/") { e.preventDefault(); if (state.view !== "list") setView("list"); els.search.focus(); }
     else if (e.key === "n") { e.preventDefault(); openDrawer(null); }
   });
 
@@ -879,46 +1483,104 @@
     if (drawer.classList.contains("open") && isDirty()) { e.preventDefault(); e.returnValue = ""; }
   });
 
-  /* ---------- Boot ---------- */
-  // One-time: take over corrected dates from the seed CSV for entries loaded from an older version of it
-  async function applySeedDateFixes() {
-    try {
-      if (localStorage.getItem(SEED_FIX_KEY) === SEED_FIX_VERSION) return;
-      const res = await fetch(SEED_URL, { cache: "no-store" });
-      if (!res.ok) return;
-      const key = (a) => `${a.firma.toLowerCase()}|${a.stelle.toLowerCase()}`;
-      const seed = new Map(appsFromCSV(await res.text()).map((a) => [key(a), a]));
-      let fixed = 0;
-      for (const a of state.apps) {
-        const s = seed.get(key(a));
-        // only same day and year with a different month – a typo fix, not a user edit
-        if (s && s.datum && a.datum && a.datum !== s.datum && a.datum.slice(8) === s.datum.slice(8) && a.datum.slice(0, 4) === s.datum.slice(0, 4)) {
-          a.datum = s.datum; fixed++;
-        }
-      }
-      if (fixed) { persist(); setTimeout(() => toast(`${fixed} Daten korrigiert`), 600); }
-      localStorage.setItem(SEED_FIX_KEY, SEED_FIX_VERSION);
-    } catch { /* ignore */ }
+  /* ---------- Anmeldung & Boot ---------- */
+  const authShell = $("#authShell"), mainApp = $("#mainApp"), authForm = $("#authForm");
+  const authMessage = $("#authMessage"), signupBtn = $("#signupBtn");
+  let appStarted = false;
+
+  function authStatus(message, ok = false) {
+    authMessage.textContent = message || "";
+    authMessage.classList.toggle("ok", ok);
   }
 
-  async function boot() {
-    const saved = load();
-    if (saved) {
-      state.apps = saved.map(normalize);
-      persist(); // store migrated format (Verlauf / Ergebnis)
-      await applySeedDateFixes();
-    } else {
-      try {
-        const res = await fetch(SEED_URL, { cache: "no-store" });
-        if (res.ok) {
-          state.apps = appsFromCSV(await res.text());
-          persist();
-          try { localStorage.setItem(SEED_FIX_KEY, SEED_FIX_VERSION); } catch {}
-          if (state.apps.length) setTimeout(() => toast(`${state.apps.length} Bewerbungen aus CSV geladen`), 600);
+  function friendlyAuthError(error) {
+    const code = error?.code || "";
+    if (code === "invalid_credentials") return "E-Mail-Adresse oder Passwort ist nicht korrekt.";
+    if (code === "email_not_confirmed") return "Bitte bestätige zuerst deine E-Mail-Adresse.";
+    if (code === "user_already_exists") return "Für diese E-Mail-Adresse gibt es bereits ein Konto.";
+    if (code === "weak_password") return "Bitte wähle ein stärkeres Passwort.";
+    return error?.message || "Anmeldung fehlgeschlagen.";
+  }
+
+  async function loadCloudData() {
+    setSyncState("syncing", "Lädt…");
+    const cached = load();
+    if (cached?.length) state.apps = cached.map(normalize);
+    const { data, error } = await db.from("applications").select("*").order("datum", { ascending: false, nullsFirst: false });
+    if (error) throw error;
+    state.apps = (data || []).map(fromRow);
+    if (!state.apps.length) {
+      const seedResponse = await fetch(SEED_URL, { cache: "no-store" });
+      if (seedResponse.ok) {
+        state.apps = appsFromCSV(await seedResponse.text());
+        if (state.apps.length) {
+          const { error: seedError } = await db.from("applications").upsert(state.apps.map(toRow), { onConflict: "id" });
+          if (seedError) throw seedError;
+          setTimeout(() => toast(`${state.apps.length} vorhandene Bewerbungen übernommen`), 500);
         }
-      } catch { /* opened via file:// – start empty, user can import */ }
+      }
     }
+    try { localStorage.setItem(`${STORAGE_KEY}.${currentUser.id}`, JSON.stringify(state.apps)); } catch {}
+    setSyncState("", "Gespeichert");
+  }
+
+  async function startApp(session) {
+    if (appStarted) return;
+    appStarted = true;
+    currentUser = session.user;
+    $("#userEmail").textContent = currentUser.email || "Angemeldet";
+    authShell.hidden = true;
+    mainApp.hidden = false;
+    try {
+      await loadCloudData();
+    } catch (error) {
+      console.error("Supabase load failed", error);
+      state.apps = (load() || []).map(normalize);
+      setSyncState("error", "Einrichtung nötig");
+      setTimeout(() => toast(error.code === "42P01" ? "Bitte zuerst das Supabase SQL-Skript ausführen" : "Cloud-Daten konnten nicht geladen werden"), 500);
+    }
+    let view = "list";
+    try { view = localStorage.getItem(VIEW_KEY) === "insights" ? "insights" : "list"; } catch {}
+    if (location.hash === "#statistiken") view = "insights";
+    setView(view);
     render();
+  }
+
+  async function stopApp() {
+    currentUser = null;
+    state.apps = [];
+    mainApp.hidden = true;
+    authShell.hidden = false;
+    authStatus("");
+    appStarted = false;
+  }
+
+  async function authenticate(createAccount) {
+    if (!db) return authStatus("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.");
+    const email = $("#authEmail").value.trim();
+    const password = $("#authPassword").value;
+    if (!email || password.length < 6) return authStatus("Bitte E-Mail und mindestens 6 Passwort-Zeichen eingeben.");
+    authStatus(createAccount ? "Konto wird erstellt…" : "Anmeldung läuft…", true);
+    const result = createAccount
+      ? await db.auth.signUp({ email, password })
+      : await db.auth.signInWithPassword({ email, password });
+    if (result.error) return authStatus(friendlyAuthError(result.error));
+    if (createAccount && !result.data.session) authStatus("Konto erstellt. Bitte öffne den Bestätigungslink in deiner E-Mail.", true);
+  }
+
+  authForm.addEventListener("submit", (event) => { event.preventDefault(); authenticate(false); });
+  signupBtn.addEventListener("click", () => authenticate(true));
+
+  async function boot() {
+    if (!db) return authStatus("Supabase konnte nicht geladen werden. Bitte Seite neu laden.");
+    const { data } = await db.auth.getSession();
+    if (data.session) await startApp(data.session);
+    db.auth.onAuthStateChange((event, session) => {
+      setTimeout(() => {
+        if (session && !appStarted) startApp(session);
+        else if (!session && appStarted) stopApp();
+      }, 0);
+    });
   }
   boot();
 })();

@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bewerbungs-Tracker</title>
+  <meta name="theme-color" content="#f6f7fb">
+  <link rel="icon" href="icons/favicon.ico" sizes="48x48">
+  <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="icons/site.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <main class="auth-shell" id="authShell">
+    <section class="auth-card" aria-labelledby="authTitle">
+      <div class="auth-brand">
+        <img src="icons/icon-192.png" alt="" width="56" height="56">
+        <div><h1 id="authTitle">Bewerbungen</h1><p>Dein persönlicher Bewerbungs-Tracker</p></div>
+      </div>
+      <form id="authForm" class="auth-form">
+        <label class="field"><span>E-Mail-Adresse</span><input id="authEmail" type="email" autocomplete="email" required placeholder="name@beispiel.ch"></label>
+        <label class="field"><span>Passwort</span><input id="authPassword" type="password" autocomplete="current-password" minlength="6" required placeholder="Mindestens 6 Zeichen"></label>
+        <p class="auth-message" id="authMessage" role="status"></p>
+        <button class="btn primary auth-submit" type="submit">Anmelden</button>
+        <button class="btn ghost auth-submit" type="button" id="signupBtn">Neues Konto erstellen</button>
+      </form>
+      <p class="auth-privacy">Deine Daten werden geschützt in deinem Supabase-Konto gespeichert.</p>
+    </section>
+  </main>
+
+  <div class="app" id="mainApp" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="30 30 196 196">
+            <path class="l-track" d="M75.1 202.1L53.9 180.9L147.2 87.6L168.4 108.8Z"/>
+            <circle class="l-step s1" cx="64.5" cy="191.5" r="28"/>
+            <circle class="l-step s2" cx="121.1" cy="134.9" r="32"/>
+            <path class="l-step s3" fill-rule="evenodd" d="M219.6 78.4A42 42 0 1 1 135.6 78.4A42 42 0 1 1 219.6 78.4ZM197.6 78.4A20 20 0 1 0 157.6 78.4A20 20 0 1 0 197.6 78.4Z"/>
+          </svg>
+        </div>
+        <div>
+          <h1>Bewerbungen</h1>
+          <p class="subtitle" id="subtitle">Dein Überblick</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span class="sync-state" id="syncState" title="Supabase-Synchronisation"><i></i><span>Online</span></span>
+        <button class="btn ghost import-top-btn" id="importBtn">
+          <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2"/></svg>
+          <span>Importieren</span>
+        </button>
+        <div class="menu-wrap">
+          <button class="icon-btn" id="menuBtn" aria-label="Mehr" aria-haspopup="true">
+            <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+          </button>
+          <div class="menu" id="menu" role="menu">
+            <button role="menuitem" data-action="export-csv">CSV exportieren</button>
+            <button role="menuitem" data-action="export-json">Backup speichern (JSON)</button>
+            <button role="menuitem" data-action="import">Importieren (CSV / JSON)</button>
+            <hr>
+            <button role="menuitem" data-action="reset" class="danger">Alle Daten löschen</button>
+            <hr>
+            <div class="menu-account" id="userEmail"></div>
+            <button role="menuitem" data-action="signout">Abmelden</button>
+          </div>
+        </div>
+        <button class="btn primary" id="addBtn">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          <span>Neue Bewerbung</span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Ansicht">
+      <button class="tab active" role="tab" data-view="list" aria-selected="true" aria-controls="viewList">
+        <svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>Bewerbungen
+      </button>
+      <button class="tab" role="tab" data-view="insights" aria-selected="false" aria-controls="viewInsights">
+        <svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Statistiken
+      </button>
+    </nav>
+
+    <div id="viewList" role="tabpanel">
+    <section class="stats" id="stats" aria-label="Statistik"></section>
+
+    <section class="distribution" aria-label="Verteilung">
+      <div class="dist-bar" id="distBar"></div>
+    </section>
+
+    <section class="toolbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="search" type="search" placeholder="Firma, Stelle oder Notiz suchen…" autocomplete="off">
+        <kbd>/</kbd>
+      </div>
+      <div class="filters" id="filters" role="tablist"></div>
+      <select id="sort" class="select" aria-label="Sortierung">
+        <option value="date-desc">Neueste zuerst</option>
+        <option value="date-asc">Älteste zuerst</option>
+        <option value="company">Firma A–Z</option>
+        <option value="updated">Zuletzt bearbeitet</option>
+      </select>
+    </section>
+
+    <main class="list" id="list" aria-live="polite"></main>
+    </div>
+
+    <section class="insights" id="viewInsights" role="tabpanel" aria-label="Statistiken" hidden></section>
+  </div>
+  <div class="tip" id="tip" role="tooltip" hidden></div>
+
+  <!-- Drawer -->
+  <div class="overlay" id="overlay" hidden></div>
+  <aside class="drawer" id="drawer" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+    <form id="form" autocomplete="off">
+      <div class="drawer-head">
+        <div class="drawer-title">
+          <div class="avatar lg" id="drawerAvatar">?</div>
+          <div>
+            <h2 id="drawerTitle">Neue Bewerbung</h2>
+            <p class="muted" id="drawerMeta"></p>
+          </div>
+        </div>
+        <button type="button" class="icon-btn" data-close aria-label="Schliessen">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+
+      <div class="drawer-body">
+        <div class="field-grid">
+          <label class="field">
+            <span>Firma</span>
+            <input name="firma" required placeholder="z.B. Swisscom">
+          </label>
+          <label class="field">
+            <span>Stelle</span>
+            <input name="stelle" placeholder="z.B. Customer Success Manager">
+          </label>
+          <label class="field">
+            <span>Beworben am</span>
+            <input name="datum" type="date">
+          </label>
+          <label class="field">
+            <span>Entscheid am</span>
+            <input name="absageAm" type="date">
+          </label>
+        </div>
+
+        <div class="block">
+          <div class="block-head">
+            <h3>Verlauf</h3>
+            <span class="muted small">Wie weit bist du gekommen?</span>
+          </div>
+          <div class="stepper" id="phaseStepper"></div>
+          <label class="inline-date" id="phaseDateWrap" hidden>
+            <span id="phaseDateLabel">Datum</span>
+            <input type="date" id="phaseDate">
+          </label>
+        </div>
+
+        <div class="block">
+          <div class="block-head">
+            <h3>Ergebnis</h3>
+            <span class="muted small">Wie ist es ausgegangen?</span>
+          </div>
+          <div class="status-picker" id="statusPicker"></div>
+        </div>
+
+        <div class="block">
+          <div class="block-head">
+            <h3>Links</h3>
+            <span class="muted small">Bestätigungen, Einladungen, Absagen</span>
+          </div>
+          <div class="links" id="linksList"></div>
+          <div class="add-row">
+            <select id="linkType" class="select sm"></select>
+            <input id="linkUrl" type="url" placeholder="https://mail.google.com/…">
+            <button type="button" class="btn ghost sm" id="addLinkBtn">Hinzufügen</button>
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="block-head"><h3>Notizen</h3></div>
+          <div class="add-note">
+            <textarea id="noteText" rows="2" placeholder="Notiz schreiben… (⌘/Ctrl + Enter)"></textarea>
+            <button type="button" class="btn ghost sm" id="addNoteBtn">Notiz hinzufügen</button>
+          </div>
+          <ol class="notes" id="notesList"></ol>
+        </div>
+      </div>
+
+      <div class="drawer-foot">
+        <button type="button" class="btn danger-ghost" id="deleteBtn">Löschen</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn ghost" data-close>Abbrechen</button>
+        <button type="submit" class="btn primary">Speichern</button>
+      </div>
+    </form>
+  </aside>
+
+  <!-- Import dialog -->
+  <div class="import-overlay" id="importOverlay" hidden></div>
+  <section class="import-dialog" id="importDialog" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="importTitle">
+    <div class="import-head">
+      <div>
+        <h2 id="importTitle">Bewerbungen importieren</h2>
+        <p class="muted">CSV-Daten ergänzen den Bestand. Ein JSON-Backup stellt den kompletten Stand wieder her.</p>
+      </div>
+      <button type="button" class="icon-btn" data-close-import aria-label="Schliessen">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="import-body">
+      <button type="button" class="drop-zone" id="dropZone">
+        <span class="drop-icon"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 20h14"/></svg></span>
+        <strong>CSV- oder JSON-Datei auswählen</strong>
+        <span>Datei hier ablegen oder klicken · maximal 5 MB</span>
+      </button>
+
+      <div class="import-result" id="importResult" hidden></div>
+
+      <div class="import-spec">
+        <div class="spec-head">
+          <div>
+            <h3>Welche Daten braucht der Import?</h3>
+            <p class="muted small">Die Spaltenreihenfolge ist egal. Gross-/Kleinschreibung wird ignoriert.</p>
+          </div>
+          <button type="button" class="text-btn template-btn" id="templateBtn">CSV-Vorlage laden</button>
+        </div>
+        <div class="spec-table" role="table" aria-label="CSV-Felder">
+          <div class="spec-row required" role="row"><b role="cell">Firma</b><span role="cell">Pflichtfeld</span><small role="cell">z.B. Swisscom</small></div>
+          <div class="spec-row" role="row"><b role="cell">Bewerbung / Eingang</b><span role="cell">Optional</span><small role="cell">TT.MM.JJJJ oder JJJJ-MM-TT</small></div>
+          <div class="spec-row" role="row"><b role="cell">Stelle</b><span role="cell">Optional</span><small role="cell">Jobtitel</small></div>
+          <div class="spec-row" role="row"><b role="cell">Status</b><span role="cell">Optional</span><small role="cell">Offen, Angebot, Absage, Keine Antwort, Zurückgezogen</small></div>
+          <div class="spec-row" role="row"><b role="cell">Verlauf</b><span role="cell">Optional</span><small role="cell">Beworben, 1. Gespräch, 2. Gespräch, Finale Runde</small></div>
+          <div class="spec-row" role="row"><b role="cell">Absage am / Entscheid</b><span role="cell">Optional</span><small role="cell">TT.MM.JJJJ oder JJJJ-MM-TT</small></div>
+          <div class="spec-row" role="row"><b role="cell">Nachweis Eingang</b><span role="cell">Optional</span><small role="cell">Link zur Bestätigung</small></div>
+          <div class="spec-row" role="row"><b role="cell">Nachweis Outcome</b><span role="cell">Optional</span><small role="cell">Link zur Einladung oder Absage</small></div>
+          <div class="spec-row" role="row"><b role="cell">Bemerkung</b><span role="cell">Optional</span><small role="cell">Mehrere Notizen mit | trennen</small></div>
+        </div>
+        <p class="spec-note">Duplikate mit gleicher Firma, Stelle und gleichem Bewerbungsdatum werden automatisch übersprungen.</p>
+      </div>
+    </div>
+
+    <div class="import-foot">
+      <button type="button" class="btn ghost" data-close-import>Abbrechen</button>
+      <button type="button" class="btn primary" id="confirmImportBtn" disabled>Importieren</button>
+    </div>
+  </section>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <input type="file" id="fileInput" accept=".csv,.json,text/csv,application/json" hidden>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.102.0/dist/umd/supabase.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
