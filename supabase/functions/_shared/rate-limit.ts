@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { HttpError } from "./http.ts";
 
 type LimitResult = { allowed: boolean; remaining: number; reset_at: string };

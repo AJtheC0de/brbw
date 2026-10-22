@@ -113,9 +113,31 @@ create table if not exists public.inbound_addresses (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   alias_token uuid not null default gen_random_uuid() unique,
+  provider text not null default 'resend',
   enabled boolean not null default false,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   unique (user_id)
+);
+
+alter table public.inbound_addresses
+  add column if not exists provider text not null default 'resend',
+  add column if not exists updated_at timestamptz not null default now();
+
+-- Minimal processing ledger for reliable webhook deduplication. Raw email bodies
+-- are fetched just-in-time from the provider and are never stored here.
+create table if not exists public.inbound_messages (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  provider text not null default 'resend',
+  provider_message_id text not null,
+  provider_event_id text,
+  status text not null default 'received' check (status in ('received', 'processing', 'suggested', 'ignored', 'failed')),
+  suggestion_id uuid references public.automation_suggestions(id) on delete set null,
+  error_code text,
+  received_at timestamptz not null default now(),
+  processed_at timestamptz,
+  unique (provider, provider_message_id)
 );
 
 -- User-visible operational history. Never store raw emails or API secrets here.
@@ -135,10 +157,13 @@ create index if not exists suggestions_user_status_idx
   on public.automation_suggestions (user_id, status, created_at desc);
 create index if not exists automation_runs_user_created_idx
   on public.automation_runs (user_id, created_at desc);
+create index if not exists inbound_messages_user_received_idx
+  on public.inbound_messages (user_id, received_at desc);
 
 alter table public.application_ai_artifacts enable row level security;
 alter table public.automation_suggestions enable row level security;
 alter table public.inbound_addresses enable row level security;
+alter table public.inbound_messages enable row level security;
 alter table public.automation_runs enable row level security;
 
 do $$
@@ -158,7 +183,15 @@ end $$;
 grant select, insert, update, delete on public.application_ai_artifacts to authenticated;
 grant select, insert, update, delete on public.automation_suggestions to authenticated;
 grant select, insert, update, delete on public.inbound_addresses to authenticated;
+revoke all on public.inbound_messages from anon, authenticated;
+grant select on public.inbound_messages to authenticated;
 grant select, insert, update, delete on public.automation_runs to authenticated;
+
+drop policy if exists "Users read own inbound messages" on public.inbound_messages;
+create policy "Users read own inbound messages"
+  on public.inbound_messages for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
 
 -- Fixed-window rate limiting for authenticated Edge Function calls.
 -- The table itself is private; callers can only consume their own quota via RPC.

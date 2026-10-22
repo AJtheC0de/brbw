@@ -1656,6 +1656,205 @@
     setTimeout(remove, action ? 5000 : 2600);
   }
 
+  /* ---------- Inbound E-Mail Assistant ---------- */
+  const inboundDialog = $("#inboundDialog"), inboundOverlay = $("#inboundOverlay");
+  const inboundAddress = $("#inboundAddress"), inboundStatusText = $("#inboundStatusText");
+  const inboundStatusDot = $("#inboundStatusDot"), toggleInboundBtn = $("#toggleInboundBtn");
+  const copyInboundAddressBtn = $("#copyInboundAddressBtn"), inboundSuggestionsList = $("#inboundSuggestionsList");
+  const inboundBadge = $("#inboundBadge");
+  let inboundSettings = null, inboundSuggestions = [], inboundLastFocus = null;
+
+  const INBOUND_EVENT_LABELS = {
+    confirmation: "Eingangsbestätigung",
+    rejection: "Absage",
+    interview_1: "Einladung · 1. Gespräch",
+    interview_2: "Einladung · 2. Gespräch",
+    final_round: "Finale Runde",
+    offer: "Angebot",
+    process_update: "Prozess-Update",
+  };
+
+  function updateInboundBadge() {
+    const count = inboundSuggestions.length;
+    inboundBadge.textContent = count > 99 ? "99+" : String(count);
+    inboundBadge.hidden = !count;
+    $("#inboundBtn").setAttribute("aria-label", count ? `E-Mail Inbox, ${count} offene Vorschläge` : "E-Mail Inbox");
+  }
+
+  function renderInboundSettings(error = "") {
+    const configured = Boolean(inboundSettings?.configured);
+    const enabled = Boolean(inboundSettings?.enabled);
+    inboundAddress.value = inboundSettings?.email || "";
+    inboundStatusDot.className = error ? "error" : enabled ? "active" : "";
+    if (error) inboundStatusText.textContent = "Die E-Mail-Automatisierung ist noch nicht vollständig eingerichtet.";
+    else if (!configured) inboundStatusText.textContent = "Die Resend-Domain muss noch mit Supabase verbunden werden.";
+    else if (enabled) inboundStatusText.textContent = "Aktiv · weitergeleitete E-Mails werden als Vorschlag geprüft.";
+    else inboundStatusText.textContent = "Bereit, aber noch deaktiviert.";
+    toggleInboundBtn.disabled = !configured || Boolean(error);
+    toggleInboundBtn.textContent = enabled ? "Deaktivieren" : "Aktivieren";
+    copyInboundAddressBtn.disabled = !inboundSettings?.email;
+  }
+
+  function candidateOptions(selectedId = "") {
+    const sorted = sortApps(state.apps, "updated");
+    return `<option value="">Bewerbung auswählen …</option>${sorted.map((app) =>
+      `<option value="${esc(app.id)}" ${app.id === selectedId ? "selected" : ""}>${esc(privateCompany(app.firma))} · ${esc(app.stelle || "Ohne Stelle")}</option>`
+    ).join("")}`;
+  }
+
+  function renderInboundSuggestions({ loading = false, error = "" } = {}) {
+    updateInboundBadge();
+    if (loading) {
+      inboundSuggestionsList.innerHTML = `<div class="suggestion-empty"><strong>Vorschläge werden geladen …</strong><span>Einen Moment bitte.</span></div>`;
+      return;
+    }
+    if (error) {
+      inboundSuggestionsList.innerHTML = `<div class="suggestion-empty"><strong>Noch nicht verbunden</strong><span>${esc(error)}</span></div>`;
+      return;
+    }
+    if (!inboundSuggestions.length) {
+      inboundSuggestionsList.innerHTML = `<div class="suggestion-empty"><strong>Alles erledigt</strong><span>Neue erkannte E-Mails erscheinen hier zur Bestätigung.</span></div>`;
+      return;
+    }
+    inboundSuggestionsList.innerHTML = inboundSuggestions.map((suggestion) => {
+      const payload = suggestion.payload || {};
+      const changes = [];
+      if (payload.suggestedStatus && payload.suggestedStatus !== "unchanged") changes.push(`Status: ${STATUS[payload.suggestedStatus]?.label || payload.suggestedStatus}`);
+      if (payload.suggestedPhase && payload.suggestedPhase !== "unchanged") changes.push(`Phase: ${PHASE[payload.suggestedPhase]?.label || payload.suggestedPhase}`);
+      if (payload.eventDate) changes.push(`Datum: ${fmtDate(payload.eventDate)}`);
+      if (payload.contactName || payload.contactEmail) changes.push("Kontakt ergänzen");
+      const matched = state.apps.some((app) => app.id === suggestion.application_id) ? suggestion.application_id : "";
+      const confidence = Math.round((Number(suggestion.confidence) || 0) * 100);
+      return `<article class="suggestion-card" data-suggestion-id="${esc(suggestion.id)}">
+        <div class="suggestion-top">
+          <div><span class="suggestion-event"><i></i>${esc(INBOUND_EVENT_LABELS[suggestion.suggestion_type] || "E-Mail-Update")}</span>
+            <h4 class="suggestion-private">${esc(payload.company || "Firma nicht sicher erkannt")}</h4>
+            <p class="suggestion-role suggestion-private">${esc(payload.role || "Stelle nicht sicher erkannt")}${payload.receivedAt ? ` · ${esc(fmtDate(String(payload.receivedAt).slice(0, 10)))}` : ""}</p>
+          </div>
+          <span class="suggestion-confidence">${confidence}% sicher</span>
+        </div>
+        <p class="suggestion-summary suggestion-private">${esc(payload.summary || "Änderung aus einer weitergeleiteten E-Mail erkannt.")}</p>
+        ${changes.length ? `<div class="suggestion-changes">${changes.map((change) => `<span>${esc(change)}</span>`).join("")}</div>` : ""}
+        <div class="suggestion-actions">
+          <select data-inbound-application aria-label="Zugehörige Bewerbung">${candidateOptions(matched)}</select>
+          <button type="button" class="btn ghost sm" data-reject-inbound>Verwerfen</button>
+          <button type="button" class="btn primary sm" data-accept-inbound>Übernehmen</button>
+        </div>
+      </article>`;
+    }).join("");
+  }
+
+  async function loadInboundSettings() {
+    const { data, error } = await db.functions.invoke("inbound-settings", { body: {} });
+    if (error || !data?.ok) throw error || new Error(data?.message || "Einstellungen konnten nicht geladen werden.");
+    inboundSettings = data.data;
+    renderInboundSettings();
+  }
+
+  async function loadInboundSuggestions({ quiet = false } = {}) {
+    if (!currentUser) return;
+    if (!quiet) renderInboundSuggestions({ loading: true });
+    const { data, error } = await db.from("automation_suggestions")
+      .select("id, application_id, suggestion_type, payload, confidence, created_at")
+      .eq("source", "email").eq("status", "pending").order("created_at", { ascending: false });
+    if (error) throw error;
+    inboundSuggestions = data || [];
+    renderInboundSuggestions();
+  }
+
+  async function refreshInbound({ quiet = false } = {}) {
+    try {
+      await Promise.all([loadInboundSettings(), loadInboundSuggestions({ quiet })]);
+    } catch (error) {
+      console.error("Inbound assistant unavailable", error);
+      renderInboundSettings(error?.message || "Einrichtung fehlt");
+      if (!quiet) renderInboundSuggestions({ error: "Bitte zuerst Datenbank, Edge Functions und Resend konfigurieren." });
+    }
+  }
+
+  function openInboundDialog() {
+    inboundLastFocus = document.activeElement;
+    inboundOverlay.hidden = false;
+    inboundDialog.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    requestAnimationFrame(() => { inboundOverlay.classList.add("show"); inboundDialog.classList.add("open"); });
+    refreshInbound();
+    setTimeout(() => $("[data-close-inbound]", inboundDialog)?.focus({ preventScroll: true }), 100);
+  }
+
+  function closeInboundDialog() {
+    if (!inboundDialog.classList.contains("open")) return;
+    inboundDialog.classList.remove("open");
+    inboundOverlay.classList.remove("show");
+    inboundDialog.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
+    setTimeout(() => {
+      if (!inboundDialog.classList.contains("open")) inboundOverlay.hidden = true;
+      inboundLastFocus?.focus?.({ preventScroll: true });
+    }, 300);
+  }
+
+  async function toggleInbound() {
+    if (!inboundSettings?.configured) return;
+    toggleInboundBtn.disabled = true;
+    const next = !inboundSettings.enabled;
+    const { data, error } = await db.functions.invoke("inbound-settings", { body: { enabled: next } });
+    if (error || !data?.ok) {
+      toggleInboundBtn.disabled = false;
+      toast("Aktivierung konnte nicht geändert werden");
+      return;
+    }
+    inboundSettings = data.data;
+    renderInboundSettings();
+    toast(next ? "E-Mail-Automatisierung aktiviert" : "E-Mail-Automatisierung deaktiviert");
+  }
+
+  async function reviewInboundSuggestion(card, accepted) {
+    const suggestion = inboundSuggestions.find((item) => item.id === card.dataset.suggestionId);
+    if (!suggestion) return;
+    const buttons = card.querySelectorAll("button");
+    buttons.forEach((button) => (button.disabled = true));
+    try {
+      if (accepted) {
+        const applicationId = card.querySelector("[data-inbound-application]").value;
+        const app = state.apps.find((item) => item.id === applicationId);
+        if (!app) throw new Error("Bitte wähle zuerst die passende Bewerbung aus.");
+        const payload = suggestion.payload || {};
+        if (STATUS[payload.suggestedStatus] && payload.suggestedStatus !== "unchanged") app.status = payload.suggestedStatus;
+        if (PHASE[payload.suggestedPhase] && payload.suggestedPhase !== "unchanged") app.phase = payload.suggestedPhase;
+        const eventDate = parseDate(payload.eventDate);
+        if (eventDate && PHASE[payload.suggestedPhase] && payload.suggestedPhase !== "beworben") app.phaseDates[payload.suggestedPhase] = eventDate;
+        if (eventDate && ["absage", "angebot"].includes(payload.suggestedStatus)) app.absageAm = eventDate;
+        if (eventDate && payload.eventType === "confirmation" && !app.datum) app.datum = eventDate;
+        if (payload.contactName) app.contactName = String(payload.contactName);
+        if (payload.contactEmail) app.contactEmail = String(payload.contactEmail);
+        const summary = String(payload.summary || "").trim();
+        if (summary && !app.notes.some((note) => note.text === summary)) app.notes.unshift({ id: uid(), text: summary, date: eventDate || todayISO() });
+        app.sourceMetadata = { ...(app.sourceMetadata || {}), lastInboundSuggestionId: suggestion.id };
+        app.updated = Date.now();
+        const { error: applicationError } = await db.from("applications").upsert(toRow(app), { onConflict: "id" });
+        if (applicationError) throw applicationError;
+        suggestion.application_id = app.id;
+      }
+      const applicationId = accepted ? card.querySelector("[data-inbound-application]").value : suggestion.application_id;
+      const { error } = await db.from("automation_suggestions").update({
+        status: accepted ? "accepted" : "rejected",
+        application_id: applicationId || null,
+        reviewed_at: new Date().toISOString(),
+      }).eq("id", suggestion.id);
+      if (error) throw error;
+      inboundSuggestions = inboundSuggestions.filter((item) => item.id !== suggestion.id);
+      persist();
+      render({ transition: true });
+      renderInboundSuggestions();
+      toast(accepted ? "Änderung übernommen" : "Vorschlag verworfen");
+    } catch (error) {
+      console.error("Inbound suggestion review failed", error);
+      toast(error?.message || "Vorschlag konnte nicht verarbeitet werden");
+      buttons.forEach((button) => (button.disabled = false));
+    }
+  }
+
   /* ---------- Import / Export ---------- */
   const importDialog = $("#importDialog"), importOverlay = $("#importOverlay"), importResult = $("#importResult");
   const confirmImportBtn = $("#confirmImportBtn"), dropZone = $("#dropZone");
@@ -1854,6 +2053,7 @@
   /* ---------- Events ---------- */
   $("#addBtn").addEventListener("click", () => openDrawer(null));
   $("#magicImportBtn").addEventListener("click", () => openDrawer(null, { focusMagic: true }));
+  $("#inboundBtn").addEventListener("click", openInboundDialog);
   $("#privacyBtn").addEventListener("click", togglePrivacyMode);
   $("#importBtn").addEventListener("click", openImportDialog);
   menuBtn.addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("open"); });
@@ -1861,6 +2061,23 @@
     if (!menu.contains(e.target)) closeMenu();
     const actionEl = e.target.closest("[data-action]");
     if (actionEl) handleAction(actionEl.dataset.action);
+  });
+
+  inboundOverlay.addEventListener("click", closeInboundDialog);
+  inboundDialog.addEventListener("click", (event) => {
+    if (event.target.closest("[data-close-inbound]")) return closeInboundDialog();
+    const card = event.target.closest("[data-suggestion-id]");
+    if (!card) return;
+    if (event.target.closest("[data-accept-inbound]")) reviewInboundSuggestion(card, true);
+    else if (event.target.closest("[data-reject-inbound]")) reviewInboundSuggestion(card, false);
+  });
+  $("#refreshInboundBtn").addEventListener("click", () => refreshInbound());
+  toggleInboundBtn.addEventListener("click", toggleInbound);
+  copyInboundAddressBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(inboundAddress.value);
+      toast("Weiterleitungsadresse kopiert");
+    } catch { toast("Adresse konnte nicht kopiert werden"); }
   });
 
   $("#fileInput").addEventListener("change", (e) => {
@@ -2044,8 +2261,9 @@
     const open = drawer.classList.contains("open");
     const importOpen = importDialog.classList.contains("open");
     const shareOpen = sharePreview.classList.contains("open");
-    if (e.key === "Escape") { if (shareOpen) closeSharePreview(); else if (importOpen) closeImportDialog(); else if (open) closeDrawer(); else closeMenu(); return; }
-    if (importOpen) return;
+    const inboundOpen = inboundDialog.classList.contains("open");
+    if (e.key === "Escape") { if (inboundOpen) closeInboundDialog(); else if (shareOpen) closeSharePreview(); else if (importOpen) closeImportDialog(); else if (open) closeDrawer(); else closeMenu(); return; }
+    if (importOpen || inboundOpen) return;
     if (open && e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveDraft(); return; }
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
     if (open || typing) return;
@@ -2124,11 +2342,16 @@
     privacyButton.setAttribute("aria-label", state.privacy ? "Privacy-Modus deaktivieren" : "Privacy-Modus aktivieren");
     privacyButton.title = state.privacy ? "Normale Ansicht wiederherstellen" : "Sichere Ansicht für Screenshots";
     render();
+    refreshInbound({ quiet: true });
   }
 
   async function stopApp() {
+    closeInboundDialog();
     currentUser = null;
     state.apps = [];
+    inboundSettings = null;
+    inboundSuggestions = [];
+    updateInboundBadge();
     mainApp.hidden = true;
     authShell.hidden = false;
     authStatus("");

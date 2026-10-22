@@ -11,6 +11,8 @@ Web-App (HTML/CSS/JS) zum Tracken von Bewerbungen mit geschützter Supabase-Sync
 - Suche, Filter, Sortierung, Statistik
 - Import/Export als CSV und JSON-Backup, inklusive CSV-Export einzelner Monate
 - Smart Magic Import: Job-URL einfügen und Firma, Rolle, Beschreibung sowie Stellendetails mit OpenAI übernehmen
+- E-Mail Inbox: persönliche Weiterleitungsadresse, automatische Erkennung von Bestätigung, Absage, Interview, Finalrunde und Angebot
+- Prüfbare E-Mail-Vorschläge mit Bewerbungszuordnung, Vertrauenswert sowie Übernehmen/Verwerfen – keine stille Statusänderung
 - Personalisierte E-Mail-Vorlagen für Nachfragen nach 7/14/21 Tagen, Interview-Dank und nächste Prozessschritte
 - E-Mail-Entwurf vorab bearbeiten oder kopieren und mit Empfänger, Betreff und Nachricht im Standard-Mailprogramm öffnen
 
@@ -29,7 +31,8 @@ Für ein bereits eingerichtetes Projekt kann `supabase/setup.sql` erneut ausgef�
 Das Skript ergänzt die Phase-1-Felder und Tabellen idempotent, ohne bestehende Bewerbungen zu löschen.
 
 Die Row-Level-Security-Regeln erlauben jedem angemeldeten Benutzer ausschliesslich den
-Zugriff auf die eigenen Bewerbungen. Der `service_role`-Key wird nicht verwendet.
+Zugriff auf die eigenen Bewerbungen. Der `service_role`-Key wird nur innerhalb der
+geschützten Inbound Edge Function verwendet und niemals an den Browser ausgeliefert.
 
 Tastatur: `N` neue Bewerbung · `/` Suche · `Esc` schliessen · `⌘/Ctrl + S` speichern
 
@@ -66,6 +69,28 @@ Für den Magic Import werden in Supabase unter Edge Functions → Secrets gesetz
 Danach muss die Edge Function `magic-import` veröffentlicht werden. Sie lädt nur öffentliche
 HTTP(S)-Stellenanzeigen, blockiert private Netzwerke, begrenzt Grösse und Laufzeit und nutzt
 Structured Outputs der OpenAI Responses API. Der API-Key wird nie an den Browser ausgeliefert.
+
+## E-Mail Inbox mit Resend einrichten
+
+1. Das aktuelle `supabase/setup.sql` im SQL Editor ausführen.
+2. Die Edge Functions `inbound-settings` und `inbound-email` veröffentlichen. Beide sind in
+   `supabase/config.toml` als öffentliche Gateway-Endpunkte markiert; `inbound-settings`
+   authentifiziert den Nutzer selbst, `inbound-email` prüft die Resend-Webhook-Signatur.
+3. In Resend eine Domain für eingehende E-Mails konfigurieren.
+4. In Resend einen Webhook für das Ereignis `email.received` mit dieser URL anlegen:
+   `https://<project-ref>.supabase.co/functions/v1/inbound-email`
+5. Folgende Supabase Edge Function Secrets setzen:
+
+   - `RESEND_API_KEY`: serverseitiger Resend API-Key
+   - `RESEND_WEBHOOK_SECRET`: Signing Secret des Resend-Webhooks (`whsec_…`)
+   - `RESEND_INBOUND_DOMAIN`: konfigurierte Empfangs-Domain, zum Beispiel `inbound.example.com`
+   - `INBOUND_ADDRESS_PREFIX` (optional): standardmässig `track-`
+   - `OPENAI_API_KEY` und optional `OPENAI_MODEL` wie beim Magic Import
+
+Danach in der App oben die **E-Mail Inbox** öffnen und aktivieren. Pro Konto wird eine
+unerratbare Adresse wie `track-<uuid>@inbound.example.com` erzeugt. Der Nutzer leitet eine
+Bewerbungs-E-Mail dorthin weiter. Die App speichert keinen E-Mail-Rohtext, sondern nur den
+KI-Vorschlag und ein minimales Verarbeitungsprotokoll. Erst **Übernehmen** ändert die Bewerbung.
 
 ## Importformat
 
