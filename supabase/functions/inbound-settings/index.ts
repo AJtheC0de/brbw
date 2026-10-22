@@ -168,8 +168,8 @@ Deno.serve(async (request) => {
         webhookUrl: `${url}/functions/v1/inbound-email`,
       },
     });
-  } catch (error) {
-    console.error("Inbound settings failed", error);
+  } catch {
+    console.error(JSON.stringify({ event: "inbound_settings_failed", code: "internal_error" }));
     return json(request, { ok: false, error: "internal_error" }, 500);
   }
 });

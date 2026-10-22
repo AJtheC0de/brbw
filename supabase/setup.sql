@@ -189,7 +189,7 @@ do $$
 declare
   table_name text;
 begin
-  foreach table_name in array array['application_ai_artifacts', 'automation_suggestions', 'automation_runs']
+  foreach table_name in array array['application_ai_artifacts', 'automation_suggestions']
   loop
     execute format('drop policy if exists "Users manage own rows" on public.%I', table_name);
     execute format(
@@ -201,6 +201,15 @@ end $$;
 
 grant select, insert, update, delete on public.application_ai_artifacts to authenticated;
 grant select, insert, update, delete on public.automation_suggestions to authenticated;
+drop policy if exists "Users manage own rows" on public.automation_runs;
+drop policy if exists "Users read own automation runs" on public.automation_runs;
+create policy "Users read own automation runs"
+  on public.automation_runs for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+revoke all on public.automation_runs from anon;
+revoke insert, update, delete on public.automation_runs from authenticated;
+grant select on public.automation_runs to authenticated;
 drop policy if exists "Users manage own rows" on public.inbound_addresses;
 drop policy if exists "Users read own inbound address" on public.inbound_addresses;
 create policy "Users read own inbound address"
@@ -211,7 +220,6 @@ revoke insert, update, delete on public.inbound_addresses from authenticated;
 grant select on public.inbound_addresses to authenticated;
 revoke all on public.inbound_messages from anon, authenticated;
 grant select on public.inbound_messages to authenticated;
-grant select, insert, update, delete on public.automation_runs to authenticated;
 
 drop policy if exists "Users read own inbound messages" on public.inbound_messages;
 create policy "Users read own inbound messages"

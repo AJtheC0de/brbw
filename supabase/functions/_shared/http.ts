@@ -49,7 +49,7 @@ export function json(request: Request, body: unknown, status = 200) {
 
 export function handleError(request: Request, error: unknown) {
   const known = error instanceof HttpError;
-  if (!known) console.error("Unhandled function error", error);
+  if (!known) console.error(JSON.stringify({ event: "unhandled_function_error", code: "internal_error" }));
   if (known && error.code === "origin_not_allowed") {
     return Response.json({ ok: false, error: error.code, message: error.message }, { status: error.status });
   }
