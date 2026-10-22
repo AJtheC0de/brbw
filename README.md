@@ -22,10 +22,38 @@ einmalig in das persönliche Konto übernommen.
 3. Unter Authentication → Providers sicherstellen, dass E-Mail aktiviert ist.
 4. In der App ein Konto erstellen und die E-Mail bestätigen.
 
+Für ein bereits eingerichtetes Projekt kann `supabase/setup.sql` erneut ausgeführt werden.
+Das Skript ergänzt die Phase-1-Felder und Tabellen idempotent, ohne bestehende Bewerbungen zu löschen.
+
 Die Row-Level-Security-Regeln erlauben jedem angemeldeten Benutzer ausschliesslich den
 Zugriff auf die eigenen Bewerbungen. Der `service_role`-Key wird nicht verwendet.
 
 Tastatur: `N` neue Bewerbung · `/` Suche · `Esc` schliessen · `⌘/Ctrl + S` speichern
+
+## Automatisierungs-Grundlage (Phase 1)
+
+Die Datenbank ist für die geplanten Funktionen vorbereitet:
+
+- zusätzliche Stellen-, Kontakt- und Follow-up-Felder an Bewerbungen
+- getrennt gespeicherte KI-Artefakte mit Eingabe-Hash und Modellangabe
+- bestätigungspflichtige Automatisierungsvorschläge statt stiller Statusänderungen
+- unerratbare, standardmässig deaktivierte Inbound-Mail-Aliasse
+- datensparsame Ausführungsprotokolle ohne rohe E-Mails oder API-Schlüssel
+- benutzerspezifisches Rate-Limiting für Edge Functions
+- serverseitige Authentifizierung, CORS-Allowlist und URL-/SSRF-Schutz
+
+`foundation-health` ist ein authentifizierter Diagnose-Endpunkt. Lokal:
+
+```sh
+supabase start
+supabase functions serve foundation-health
+```
+
+Vor dem Deployment sollten zusätzliche Produktionsdomains als kommagetrennte
+Variable `ALLOWED_ORIGINS` in den Supabase Edge Function Secrets hinterlegt werden.
+KI- oder E-Mail-API-Schlüssel gehören ebenfalls ausschliesslich dorthin und niemals
+in `app.js`, Git oder Browser-Storage. Die Publishable Supabase-ID im Frontend ist
+kein geheimer Schlüssel; der Service-Role-Key wird weiterhin nicht im Browser benutzt.
 
 ## Importformat
 

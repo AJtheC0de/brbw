@@ -172,6 +172,13 @@
       datum: a.datum || null, status: a.status, phase: a.phase,
       phase_dates: a.phaseDates || {}, entscheid_am: a.absageAm || null,
       links: a.links || [], notes: a.notes || [], updated_at: Number(a.updated || Date.now()),
+      job_url: a.jobUrl || null, job_description: a.jobDescription || null,
+      company_logo_url: a.companyLogoUrl || null, location: a.location || null,
+      employment_type: a.employmentType || null, workload: a.workload || null,
+      work_model: a.workModel || null, contact_name: a.contactName || null,
+      contact_email: a.contactEmail || null, salary_text: a.salaryText || null,
+      follow_up_at: a.followUpAt || null, next_action: a.nextAction || null,
+      source_metadata: a.sourceMetadata || {},
     };
   }
 
@@ -180,6 +187,13 @@
       id: row.id, firma: row.firma, stelle: row.stelle, datum: row.datum,
       status: row.status, phase: row.phase, phaseDates: row.phase_dates,
       absageAm: row.entscheid_am, links: row.links, notes: row.notes, updated: row.updated_at,
+      jobUrl: row.job_url, jobDescription: row.job_description,
+      companyLogoUrl: row.company_logo_url, location: row.location,
+      employmentType: row.employment_type, workload: row.workload,
+      workModel: row.work_model, contactName: row.contact_name,
+      contactEmail: row.contact_email, salaryText: row.salary_text,
+      followUpAt: row.follow_up_at, nextAction: row.next_action,
+      sourceMetadata: row.source_metadata,
     });
   }
 
@@ -1496,6 +1510,19 @@
       absageAm: parseDate(a.absageAm),
       links: Array.isArray(a.links) ? a.links.filter((l) => l && l.url).map((l) => ({ id: l.id || uid(), type: LINK_TYPE[l.type] ? l.type : "sonstiges", url: String(l.url) })) : [],
       notes: Array.isArray(a.notes) ? a.notes.filter((n) => n && n.text).map((n) => ({ id: n.id || uid(), text: String(n.text), date: parseDate(n.date) || todayISO() })) : [],
+      jobUrl: String(a.jobUrl || ""),
+      jobDescription: String(a.jobDescription || ""),
+      companyLogoUrl: String(a.companyLogoUrl || ""),
+      location: String(a.location || ""),
+      employmentType: String(a.employmentType || ""),
+      workload: String(a.workload || ""),
+      workModel: String(a.workModel || ""),
+      contactName: String(a.contactName || ""),
+      contactEmail: String(a.contactEmail || ""),
+      salaryText: String(a.salaryText || ""),
+      followUpAt: String(a.followUpAt || ""),
+      nextAction: String(a.nextAction || ""),
+      sourceMetadata: a.sourceMetadata && typeof a.sourceMetadata === "object" ? a.sourceMetadata : {},
       updated: a.updated || Date.now(),
     };
   }
