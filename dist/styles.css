@@ -279,15 +279,17 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
   flex: 1; min-width: 0; width: auto; padding: 16px 12px 16px 18px; border: 0; background: none; text-align: left; border-radius: 16px;
 }
 .month-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.month-export {
-  flex: none; width: 36px; height: 36px; margin-right: 14px; display: grid; place-items: center;
+.month-actions { display: flex; align-items: center; gap: 6px; margin-right: 14px; }
+.month-action {
+  flex: none; width: 36px; height: 36px; display: grid; place-items: center;
   border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); color: var(--text-3);
   transition: color .2s, border-color .2s, background-color .2s, transform .2s var(--ease);
 }
-.month-export:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: var(--accent-soft); }
-.month-export:active { transform: scale(.94); }
-.month-export:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.month-export svg { width: 17px; height: 17px; }
+.month-action:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: var(--accent-soft); }
+.month-action.share { color: var(--accent); background: var(--accent-soft); }
+.month-action:active { transform: scale(.94); }
+.month-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.month-action svg { width: 17px; height: 17px; }
 .month-cal {
   width: 46px; height: 46px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: var(--accent-soft); color: var(--accent); line-height: 1;
@@ -321,7 +323,7 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 @media (max-width: 560px) {
   .month-head { grid-template-columns: auto 1fr auto; gap: 12px; padding: 14px 8px 14px 14px; }
   .month-head .chev { display: none; }
-  .month-export { margin-right: 10px; }
+  .month-actions { margin-right: 10px; gap: 5px; }
   .month-bar { width: 100%; max-width: 160px; }
   .month-cards { padding: 0 8px 8px; }
 }

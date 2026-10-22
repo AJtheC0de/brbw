@@ -60,6 +60,7 @@
     briefcase: '<svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="3"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>',
     flag: '<svg viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>',
     download: '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2"/></svg>',
+    share: '<svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.5l6.8-4M8.6 13.5l6.8 4"/></svg>',
   };
 
   /* ---------- Helpers ---------- */
@@ -535,7 +536,10 @@
               <div class="month-count"><b>${list.length}</b><small>${list.length === 1 ? "Bewerbung" : "Bewerbungen"}</small></div>
               <span class="chev"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
             </button>
-            <button class="month-export" data-export-month="${key}" aria-label="${name} ${year} als CSV exportieren" title="${name} ${year} als CSV exportieren">${ICONS.download}</button>
+            <div class="month-actions">
+              <button class="month-action share" data-share-month="${key}" aria-label="${name} ${year} als Karte teilen" title="Monatskarte teilen">${ICONS.share}</button>
+              <button class="month-action" data-export-month="${key}" aria-label="${name} ${year} als CSV exportieren" title="${name} ${year} als CSV exportieren">${ICONS.download}</button>
+            </div>
           </div>
           <div class="month-body"><div class="month-inner"><div class="month-cards">
             ${list.map(cardHTML).join("")}
@@ -572,6 +576,113 @@
     download(`bewerbungen-${label}.csv`, appsToCSV(apps), "text/csv;charset=utf-8");
     const name = key === "none" ? "Ohne Datum" : `${MONTHS[+key.slice(5, 7) - 1]} ${key.slice(0, 4)}`;
     toast(`${name} als CSV exportiert`);
+  }
+
+  function roundRect(ctx, x, y, w, h, r, fill) {
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+
+  function shareCardForMonth(key) {
+    const apps = state.apps.filter((a) => key === "none" ? !a.datum : a.datum?.slice(0, 7) === key);
+    if (!apps.length) return toast("Keine Bewerbungen in diesem Monat");
+
+    const name = key === "none" ? "Ohne Datum" : MONTHS[+key.slice(5, 7) - 1];
+    const year = key === "none" ? "" : key.slice(0, 4);
+    const total = apps.length;
+    const counts = Object.fromEntries(STATUSES.map((s) => [s.id, apps.filter((a) => a.status === s.id).length]));
+    const talks = apps.filter(hadInterview).length;
+    const answered = apps.filter((a) => (a.status !== "offen" && a.status !== "keine") || hadInterview(a)).length;
+    const pct = (n) => total ? Math.round(n / total * 100) : 0;
+    const roleCounts = new Map();
+    apps.forEach((a) => {
+      const role = cleanRole(a.stelle) || "Nicht angegeben";
+      roleCounts.set(role, (roleCounts.get(role) || 0) + 1);
+    });
+    const roles = [...roleCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "de")).slice(0, 3);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 1200; canvas.height = 1500;
+    const ctx = canvas.getContext("2d");
+    const bg = ctx.createLinearGradient(0, 0, 1200, 1500);
+    bg.addColorStop(0, "#f7f7ff"); bg.addColorStop(.55, "#ffffff"); bg.addColorStop(1, "#f5f3ff");
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, 1200, 1500);
+
+    const glow = ctx.createRadialGradient(1040, 80, 0, 1040, 80, 540);
+    glow.addColorStop(0, "rgba(139,92,246,.20)"); glow.addColorStop(1, "rgba(139,92,246,0)");
+    ctx.fillStyle = glow; ctx.fillRect(0, 0, 1200, 650);
+
+    // Brand mark
+    const iconGrad = ctx.createLinearGradient(78, 72, 166, 160);
+    iconGrad.addColorStop(0, "#6366f1"); iconGrad.addColorStop(1, "#8b5cf6");
+    roundRect(ctx, 72, 72, 96, 96, 27, iconGrad);
+    ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.lineWidth = 10; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(100, 140); ctx.lineTo(140, 100); ctx.stroke();
+    [100, 120, 140].forEach((v, i) => { ctx.beginPath(); ctx.arc(v, 140 - i * 20, 9, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill(); });
+    ctx.fillStyle = "#0f172a"; ctx.font = "700 34px Inter, system-ui, sans-serif"; ctx.fillText("BEWERBUNGEN", 192, 113);
+    ctx.fillStyle = "#64748b"; ctx.font = "500 23px Inter, system-ui, sans-serif"; ctx.fillText("Mein Bewerbungsmonat", 192, 150);
+
+    ctx.fillStyle = "#0f172a"; ctx.font = "700 76px Inter, system-ui, sans-serif"; ctx.fillText(`${name} ${year}`.trim(), 72, 285);
+    ctx.fillStyle = "#64748b"; ctx.font = "500 26px Inter, system-ui, sans-serif"; ctx.fillText("Ein Monat in Zahlen", 76, 330);
+
+    roundRect(ctx, 72, 380, 1056, 270, 38, "#111827");
+    ctx.fillStyle = "#fff"; ctx.font = "700 132px Inter, system-ui, sans-serif"; ctx.fillText(String(total), 116, 548);
+    ctx.fillStyle = "rgba(255,255,255,.66)"; ctx.font = "600 27px Inter, system-ui, sans-serif"; ctx.fillText(total === 1 ? "BEWERBUNG" : "BEWERBUNGEN", 118, 598);
+    const metrics = [[`${pct(answered)}%`, "Antworten"], [`${pct(talks)}%`, "Gespräche"]];
+    metrics.forEach(([value, label], i) => {
+      const x = 570 + i * 270;
+      ctx.fillStyle = "#fff"; ctx.font = "700 58px Inter, system-ui, sans-serif"; ctx.fillText(value, x, 510);
+      ctx.fillStyle = "rgba(255,255,255,.62)"; ctx.font = "500 23px Inter, system-ui, sans-serif"; ctx.fillText(label, x, 554);
+    });
+
+    ctx.fillStyle = "#0f172a"; ctx.font = "700 30px Inter, system-ui, sans-serif"; ctx.fillText("Status im Überblick", 72, 730);
+    const palette = { offen: "#3b82f6", angebot: "#10b981", absage: "#f43f5e", keine: "#94a3b8", zurueckgezogen: "#64748b" };
+    const shown = STATUSES.filter((s) => counts[s.id]);
+    let barX = 72;
+    shown.forEach((s) => {
+      const w = 1056 * counts[s.id] / total;
+      ctx.fillStyle = palette[s.id]; ctx.fillRect(barX, 770, w, 24); barX += w;
+    });
+    shown.forEach((s, i) => {
+      const col = i % 3, row = Math.floor(i / 3), x = 72 + col * 350, y = 850 + row * 82;
+      ctx.beginPath(); ctx.arc(x + 12, y - 9, 11, 0, Math.PI * 2); ctx.fillStyle = palette[s.id]; ctx.fill();
+      ctx.fillStyle = "#0f172a"; ctx.font = "700 28px Inter, system-ui, sans-serif"; ctx.fillText(String(counts[s.id]), x + 38, y);
+      ctx.fillStyle = "#64748b"; ctx.font = "500 21px Inter, system-ui, sans-serif"; ctx.fillText(s.label, x + 78, y - 2);
+    });
+
+    const rolesY = shown.length > 3 ? 1040 : 970;
+    ctx.fillStyle = "#0f172a"; ctx.font = "700 30px Inter, system-ui, sans-serif"; ctx.fillText("Rollen im Fokus", 72, rolesY);
+    roles.forEach(([role, count], i) => {
+      const y = rolesY + 62 + i * 82;
+      roundRect(ctx, 72, y - 36, 1056, 62, 18, i === 0 ? "#eef2ff" : "#f8fafc");
+      ctx.fillStyle = i === 0 ? "#6366f1" : "#94a3b8"; ctx.font = "700 21px Inter, system-ui, sans-serif"; ctx.fillText(String(i + 1).padStart(2, "0"), 98, y + 4);
+      ctx.fillStyle = "#1e293b"; ctx.font = "600 22px Inter, system-ui, sans-serif";
+      const label = role.length > 52 ? role.slice(0, 49) + "…" : role;
+      ctx.fillText(label, 156, y + 4);
+      ctx.textAlign = "right"; ctx.fillStyle = "#64748b"; ctx.fillText(`${count}×`, 1095, y + 4); ctx.textAlign = "left";
+    });
+
+    ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(72, 1410); ctx.lineTo(1128, 1410); ctx.stroke();
+    ctx.fillStyle = "#94a3b8"; ctx.font = "500 21px Inter, system-ui, sans-serif"; ctx.fillText("Fortschritt sichtbar machen. Schritt für Schritt.", 72, 1455);
+    ctx.textAlign = "right"; ctx.font = "700 21px Inter, system-ui, sans-serif"; ctx.fillStyle = "#6366f1"; ctx.fillText("BEWERBUNGEN", 1128, 1455); ctx.textAlign = "left";
+
+    const data = canvas.toDataURL("image/png");
+    const binary = atob(data.split(",")[1]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const filename = `bewerbungsmonat-${key === "none" ? "ohne-datum" : key}.png`;
+    const file = new File([bytes], filename, { type: "image/png" });
+    const canNativeShare = navigator.maxTouchPoints > 0 && navigator.share && navigator.canShare?.({ files: [file] });
+    if (canNativeShare) {
+      navigator.share({ files: [file], title: `Mein Bewerbungsmonat ${name} ${year}`.trim() })
+        .then(() => toast("Monatskarte geteilt"))
+        .catch((error) => { if (error.name !== "AbortError") download(filename, file, "image/png"); });
+    } else {
+      download(filename, file, "image/png");
+      toast("Monatskarte als PNG gespeichert");
+    }
   }
 
   /* ---------- Statistiken ---------- */
@@ -1379,6 +1490,8 @@
   els.sort.addEventListener("change", () => { state.sort = els.sort.value; render({ transition: true }); });
 
   els.list.addEventListener("click", (e) => {
+    const monthShare = e.target.closest("[data-share-month]");
+    if (monthShare) return shareCardForMonth(monthShare.dataset.shareMonth);
     const monthExport = e.target.closest("[data-export-month]");
     if (monthExport) return exportMonth(monthExport.dataset.exportMonth);
     const head = e.target.closest(".month-head");
