@@ -125,6 +125,32 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 .subtitle { margin: 0; color: var(--text-2); font-size: 13px; }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 
+/* ---------- Privacy / screenshot mode ---------- */
+.privacy-toggle { padding: 0 12px; }
+.privacy-toggle svg { width: 18px; height: 18px; }
+.privacy-toggle .privacy-on { display: none; }
+.privacy-toggle.active {
+  color: #fff; border-color: transparent;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  box-shadow: 0 6px 18px rgba(99, 102, 241, .28);
+}
+.privacy-toggle.active .privacy-off { display: none; }
+.privacy-toggle.active .privacy-on { display: block; }
+.privacy-mode #drawerTitle,
+.privacy-mode #form input[name="firma"],
+.privacy-mode .link-item a small,
+.privacy-mode .note p {
+  filter: blur(6px); user-select: none;
+}
+.privacy-mode .link-item a,
+.privacy-mode .note p { pointer-events: none; }
+.privacy-mode .avatar { background: linear-gradient(135deg, #818cf8, #a78bfa); }
+.privacy-mode .menu-account { letter-spacing: .02em; }
+@media (max-width: 760px) {
+  .privacy-toggle { width: 40px; padding: 0; }
+  .privacy-toggle span { display: none; }
+}
+
 /* ---------- Buttons ---------- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;

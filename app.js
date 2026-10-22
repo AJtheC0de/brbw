@@ -8,6 +8,7 @@
   const SEED_FIX_VERSION = "2";
   const SEED_URL = "data/bewerbungen.csv";
   const VIEW_KEY = "bwrb.view";
+  const PRIVACY_KEY = "bwrb.privacyMode";
   const SUPABASE_URL = "https://coxmnerqoaclawbbgipx.supabase.co";
   const SUPABASE_KEY = "sb_publishable_2oKHLoM5fCrNiQ1FCpvPig_0Ci3zISR";
   const db = window.supabase?.createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -68,6 +69,24 @@
   const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const todayISO = () => new Date().toISOString().slice(0, 10);
+
+  function alphaCode(index) {
+    let code = "";
+    for (let n = index + 1; n > 0; n = Math.floor((n - 1) / 26)) code = String.fromCharCode(65 + ((n - 1) % 26)) + code;
+    return code;
+  }
+
+  function privateCompany(name) {
+    if (!state?.privacy) return String(name || "");
+    const companies = [...new Set(state.apps.map((a) => String(a.firma || "").trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, "de", { sensitivity: "base" }));
+    const index = Math.max(0, companies.findIndex((company) => company === String(name || "").trim()));
+    return `Unternehmen ${alphaCode(index)}`;
+  }
+
+  function privateInitials(name) {
+    return state?.privacy ? "••" : initials(name);
+  }
 
   function parseDate(str) {
     if (!str) return "";
@@ -352,6 +371,7 @@
     draftOriginal: "",
     isNew: false,
     view: "list",
+    privacy: (() => { try { return localStorage.getItem(PRIVACY_KEY) === "1"; } catch { return false; } })(),
     openMonths: new Set((() => { try { return JSON.parse(localStorage.getItem(OPEN_KEY)) || []; } catch { return []; } })()),
   };
 
@@ -473,9 +493,9 @@
     const age = a.status === "offen" && d !== null ? relDays(d) : a.absageAm ? `Entscheid ${fmtDate(a.absageAm)}` : "";
     return `
       <button class="card" data-id="${a.id}" style="--i:${Math.min(i, 24)};--c:${s.color}">
-        <div class="avatar" style="--h:${hue(a.firma)}">${esc(initials(a.firma))}</div>
+        <div class="avatar" style="--h:${hue(a.firma)}">${esc(privateInitials(a.firma))}</div>
         <div class="card-main">
-          <div class="card-title"><strong>${esc(a.firma)}</strong></div>
+          <div class="card-title"><strong>${esc(privateCompany(a.firma))}</strong></div>
           <div class="card-role">${esc(a.stelle || "—")}</div>
           <div class="card-meta">
             ${a.datum ? `<span>${ICONS.calendar}${fmtDateLong(a.datum)}</span>` : ""}
@@ -967,8 +987,8 @@
   function miniRowHTML(a, side) {
     return `
       <button class="mini-row" data-open-id="${a.id}">
-        <span class="avatar sm" style="--h:${hue(a.firma)}">${esc(initials(a.firma))}</span>
-        <span class="mini-main"><b>${esc(a.firma)}</b><small>${esc(a.stelle || "—")}</small></span>
+        <span class="avatar sm" style="--h:${hue(a.firma)}">${esc(privateInitials(a.firma))}</span>
+        <span class="mini-main"><b>${esc(privateCompany(a.firma))}</b><small>${esc(a.stelle || "—")}</small></span>
         <span class="mini-side">${side}</span>
       </button>`;
   }
@@ -1220,9 +1240,11 @@
     const d = state.draft;
     const name = form.firma.value.trim();
     const av = $("#drawerAvatar");
-    av.textContent = initials(name || "?");
+    av.textContent = privateInitials(name || "?");
     av.style.setProperty("--h", hue(name));
-    $("#drawerTitle").textContent = name || (state.isNew ? "Neue Bewerbung" : "Bewerbung");
+    $("#drawerTitle").textContent = name
+      ? privateCompany(name)
+      : (state.isNew ? "Neue Bewerbung" : "Bewerbung");
     $("#drawerMeta").textContent = state.isNew
       ? "Erfasse die Eckdaten deiner Bewerbung"
       : [form.stelle.value.trim(), d.datum && `beworben ${relDays(daysSince(d.datum))}`].filter(Boolean).join(" · ");
@@ -1350,7 +1372,7 @@
     saveOpenMonths();
     closeDrawer(true);
     render({ transition: true });
-    toast(wasNew ? `${name} hinzugefügt` : `${name} gespeichert`);
+    toast(state.privacy ? (wasNew ? "Bewerbung hinzugefügt" : "Bewerbung gespeichert") : (wasNew ? `${name} hinzugefügt` : `${name} gespeichert`));
     flashCard(state.apps[idx >= 0 ? idx : 0]?.id);
   }
 
@@ -1371,7 +1393,7 @@
     persist();
     closeDrawer(true);
     render({ transition: true });
-    toast(`${app.firma} gelöscht`, {
+    toast(state.privacy ? "Bewerbung gelöscht" : `${app.firma} gelöscht`, {
       action: "Rückgängig",
       onAction: () => { state.apps.splice(idx, 0, app); persist(); render({ transition: true }); },
     });
@@ -1531,6 +1553,34 @@
   const menu = $("#menu"), menuBtn = $("#menuBtn");
   const closeMenu = () => menu.classList.remove("open");
 
+  function applyPrivacyMode({ announce = false } = {}) {
+    document.body.classList.toggle("privacy-mode", state.privacy);
+    const button = $("#privacyBtn");
+    button.classList.toggle("active", state.privacy);
+    button.setAttribute("aria-pressed", String(state.privacy));
+    button.setAttribute("aria-label", state.privacy ? "Privacy-Modus deaktivieren" : "Privacy-Modus aktivieren");
+    button.title = state.privacy ? "Normale Ansicht wiederherstellen" : "Sichere Ansicht für Screenshots";
+    if (currentUser) $("#userEmail").textContent = state.privacy ? "Konto geschützt" : (currentUser.email || "Angemeldet");
+    if (state.privacy && els.search.value) {
+      els.search.value = "";
+      state.query = "";
+    }
+    if (state.draft) {
+      renderDrawerHead();
+      renderLinks();
+      renderNotes();
+    }
+    render({ transition: true });
+    if (announce) toast(state.privacy ? "Privacy-Modus aktiv" : "Privacy-Modus deaktiviert");
+  }
+
+  function togglePrivacyMode() {
+    state.privacy = !state.privacy;
+    try { localStorage.setItem(PRIVACY_KEY, state.privacy ? "1" : "0"); } catch {}
+    closeMenu();
+    applyPrivacyMode({ announce: true });
+  }
+
   function handleAction(action) {
     closeMenu();
     const stamp = todayISO();
@@ -1556,6 +1606,7 @@
 
   /* ---------- Events ---------- */
   $("#addBtn").addEventListener("click", () => openDrawer(null));
+  $("#privacyBtn").addEventListener("click", togglePrivacyMode);
   $("#importBtn").addEventListener("click", openImportDialog);
   menuBtn.addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("open"); });
   document.addEventListener("click", (e) => {
@@ -1754,7 +1805,7 @@
     if (appStarted) return;
     appStarted = true;
     currentUser = session.user;
-    $("#userEmail").textContent = currentUser.email || "Angemeldet";
+    $("#userEmail").textContent = state.privacy ? "Konto geschützt" : (currentUser.email || "Angemeldet");
     authShell.hidden = true;
     mainApp.hidden = false;
     try {
@@ -1769,6 +1820,12 @@
     try { view = localStorage.getItem(VIEW_KEY) === "insights" ? "insights" : "list"; } catch {}
     if (location.hash === "#statistiken") view = "insights";
     setView(view);
+    document.body.classList.toggle("privacy-mode", state.privacy);
+    const privacyButton = $("#privacyBtn");
+    privacyButton.classList.toggle("active", state.privacy);
+    privacyButton.setAttribute("aria-pressed", String(state.privacy));
+    privacyButton.setAttribute("aria-label", state.privacy ? "Privacy-Modus deaktivieren" : "Privacy-Modus aktivieren");
+    privacyButton.title = state.privacy ? "Normale Ansicht wiederherstellen" : "Sichere Ansicht für Screenshots";
     render();
   }
 
