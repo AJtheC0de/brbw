@@ -254,7 +254,6 @@
       }
       if (generation === syncGeneration) setSyncState("", "Gespeichert");
     } catch (error) {
-      console.error("Supabase sync failed", error);
       setSyncState("error", "Nicht synchronisiert");
       toast(error.code === "42P01" ? "Supabase ist noch nicht eingerichtet" : "Cloud-Speicherung fehlgeschlagen");
     }
@@ -1339,15 +1338,7 @@
     setMagicStatus("Stellenanzeige wird gelesen und mit OpenAI ausgewertet …", "loading");
     try {
       const { data, error } = await db.functions.invoke("magic-import", { body: { url } });
-      if (error) {
-        let message = error.message || "Import fehlgeschlagen";
-        try {
-          const details = await error.context?.json?.();
-          if (details?.message) message = details.message;
-        } catch {}
-        throw new Error(message);
-      }
-      if (!data?.ok || !data.data) throw new Error(data?.message || "Keine Stellenangaben erkannt.");
+      if (error || !data?.ok || !data.data) throw new Error("magic_import_failed");
       const result = data.data;
       const values = {
         firma: result.company, stelle: result.role, location: result.location,
@@ -1375,8 +1366,8 @@
       renderEmailComposer(!emailTextCustomized);
       const confidence = Math.round((Number(result.confidence) || 0) * 100);
       setMagicStatus(`${filled} Felder übernommen${confidence ? ` · ${confidence}% Erkennungssicherheit` : ""}. Bitte kurz prüfen.`, "success");
-    } catch (error) {
-      setMagicStatus(error.message || "Magic Import ist gerade nicht verfügbar.", "error");
+    } catch {
+      setMagicStatus("Magic Import ist gerade nicht verfügbar.", "error");
     } finally {
       runMagicImportBtn.disabled = false;
       $("#pasteJobUrlBtn").disabled = false;
@@ -1811,8 +1802,7 @@
     try {
       await Promise.all([loadInboundSettings(), loadInboundSuggestions({ quiet })]);
     } catch (error) {
-      console.error("Inbound assistant unavailable", error);
-      renderInboundSettings(error?.message || "Einrichtung fehlt");
+      renderInboundSettings("E-Mail-Assistent gerade nicht verfügbar");
       if (!quiet) renderInboundSuggestions({ error: "Bitte zuerst Datenbank, Edge Functions und Resend konfigurieren." });
     }
   }
@@ -1894,8 +1884,9 @@
       renderInboundSuggestions();
       toast(accepted ? "Änderung übernommen" : "Vorschlag verworfen");
     } catch (error) {
-      console.error("Inbound suggestion review failed", error);
-      toast(error?.message || "Vorschlag konnte nicht verarbeitet werden");
+      toast(error?.message === "Bitte wähle zuerst die passende Bewerbung aus."
+        ? error.message
+        : "Vorschlag konnte nicht verarbeitet werden");
       buttons.forEach((button) => (button.disabled = false));
     }
   }
@@ -2279,7 +2270,9 @@
       jobImportUrl.value = text.trim();
       runMagicImport();
     } catch (error) {
-      setMagicStatus(error.message || "Zwischenablage konnte nicht gelesen werden. Füge den Link direkt ein.", "error");
+      setMagicStatus(error.message === "In der Zwischenablage ist kein gültiger Link."
+        ? error.message
+        : "Zwischenablage konnte nicht gelesen werden. Füge den Link direkt ein.", "error");
     }
   });
   form.nextAction.addEventListener("input", () => {
@@ -2343,7 +2336,7 @@
     if (code === "email_not_confirmed") return "Bitte bestätige zuerst deine E-Mail-Adresse.";
     if (code === "user_already_exists") return "Für diese E-Mail-Adresse gibt es bereits ein Konto.";
     if (code === "weak_password") return "Bitte wähle ein stärkeres Passwort.";
-    return error?.message || "Anmeldung fehlgeschlagen.";
+    return "Anmeldung fehlgeschlagen. Bitte versuche es erneut.";
   }
 
   async function loadCloudData() {
