@@ -69,6 +69,11 @@
   const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const todayISO = () => new Date().toISOString().slice(0, 10);
+  const addDaysISO = (iso, days) => {
+    const date = new Date(`${parseDate(iso) || todayISO()}T12:00:00`);
+    date.setDate(date.getDate() + days);
+    return date.toISOString().slice(0, 10);
+  };
 
   function alphaCode(index) {
     let code = "";
@@ -196,7 +201,8 @@
       employment_type: a.employmentType || null, workload: a.workload || null,
       work_model: a.workModel || null, contact_name: a.contactName || null,
       contact_email: a.contactEmail || null, salary_text: a.salaryText || null,
-      follow_up_at: a.followUpAt || null, next_action: a.nextAction || null,
+      follow_up_at: a.followUpAt || null, follow_up_done_at: a.followUpDoneAt || null,
+      next_action: a.nextAction || null,
       source_metadata: a.sourceMetadata || {},
     };
   }
@@ -211,7 +217,8 @@
       employmentType: row.employment_type, workload: row.workload,
       workModel: row.work_model, contactName: row.contact_name,
       contactEmail: row.contact_email, salaryText: row.salary_text,
-      followUpAt: row.follow_up_at, nextAction: row.next_action,
+      followUpAt: row.follow_up_at, followUpDoneAt: row.follow_up_done_at,
+      nextAction: row.next_action,
       sourceMetadata: row.source_metadata,
     });
   }
@@ -278,6 +285,11 @@
     const iProofIn = head.findIndex((h) => h.includes("nachweis eingang") || h.includes("bestätigung"));
     const iProofOut = head.findIndex((h) => h.includes("nachweis outcome") || h.includes("outcome"));
     const iNote = col("bemerkung", "notiz", "notizen", "notes");
+    const iContact = col("ansprechpartner", "kontakt", "kontaktperson", "contact name");
+    const iEmail = col("kontakt-e-mail", "kontakt email", "e-mail", "email", "contact email");
+    const iAction = col("nächste aktion", "naechste aktion", "next action");
+    const iFollowUp = col("nachfassen am", "nachfassdatum", "follow-up", "follow up", "follow up at");
+    const iFollowUpDone = col("nachfassen erledigt", "follow-up erledigt", "follow up done");
 
     if (iFirma < 0) return { apps: [], errors: ['Die Pflichtspalte „Firma“ fehlt.'], total: Math.max(0, rows.length - 1) };
 
@@ -287,10 +299,12 @@
       const rowNo = index + 2;
       const firma = get(iFirma);
       const dateRaw = get(iDate), decisionRaw = get(iAbsage), statusRaw = get(iStatus), phaseRaw = get(iPhase);
+      const followUpRaw = get(iFollowUp);
       const rowErrors = [];
       if (!firma) rowErrors.push("Firma fehlt");
       if (dateRaw && !parseDate(dateRaw)) rowErrors.push("Bewerbungsdatum ist ungültig");
       if (decisionRaw && !parseDate(decisionRaw)) rowErrors.push("Entscheiddatum ist ungültig");
+      if (followUpRaw && !parseDate(followUpRaw)) rowErrors.push("Nachfassdatum ist ungültig");
       if (phaseRaw && !phaseFromText(phaseRaw)) rowErrors.push(`Verlauf „${phaseRaw}“ ist unbekannt`);
       if (statusRaw) {
         const s = statusRaw.toLowerCase();
@@ -325,6 +339,11 @@
         phase,
         phaseDates: {},
         absageAm: parseDate(get(iAbsage)),
+        contactName: get(iContact),
+        contactEmail: get(iEmail),
+        nextAction: get(iAction),
+        followUpAt: parseDate(followUpRaw),
+        followUpDoneAt: /^(ja|yes|erledigt|done|1|true)$/i.test(get(iFollowUpDone)) ? new Date().toISOString() : "",
         links, notes,
         updated: Date.now(),
       });
@@ -339,7 +358,7 @@
 
   function appsToCSV(apps) {
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const header = ["Monat", "Bewerbung / Eingang", "Firma", "Stelle", "Status", "Verlauf", "Absage am", "Nachweis Eingang", "Nachweis Outcome", "Bemerkung"];
+    const header = ["Monat", "Bewerbung / Eingang", "Firma", "Stelle", "Status", "Verlauf", "Absage am", "Ansprechpartner", "Kontakt-E-Mail", "Nächste Aktion", "Nachfassen am", "Nachfassen erledigt", "Nachweis Eingang", "Nachweis Outcome", "Bemerkung"];
     const lines = [header.map(q).join(";")];
     for (const a of sortApps(apps, "date-desc")) {
       const proofIn = a.links.filter((l) => l.type === "bestaetigung").map((l) => l.url).join(" ");
@@ -347,7 +366,8 @@
       const month = a.datum ? MONTHS[+a.datum.slice(5, 7) - 1] : "";
       lines.push([
         month, fmtDate(a.datum), a.firma, a.stelle, STATUS[a.status]?.label || "", PHASE[a.phase]?.label || "",
-        fmtDate(a.absageAm), proofIn, proofOut, a.notes.map((n) => n.text.replace(/\s*\n\s*/g, " ")).join(" | "),
+        fmtDate(a.absageAm), a.contactName, a.contactEmail, a.nextAction, fmtDate(a.followUpAt), a.followUpDoneAt ? "Ja" : "Nein",
+        proofIn, proofOut, a.notes.map((n) => n.text.replace(/\s*\n\s*/g, " ")).join(" | "),
       ].map(q).join(";"));
     }
     return "﻿" + lines.join("\r\n");
@@ -391,7 +411,7 @@
       if (state.filter === "gespraech") { if (!hadInterview(a)) return false; }
       else if (state.filter !== "alle" && a.status !== state.filter) return false;
       if (!q) return true;
-      return [a.firma, a.stelle, STATUS[a.status]?.label, PHASE[a.phase]?.label, ...a.notes.map((n) => n.text)]
+      return [a.firma, a.stelle, a.contactName, a.contactEmail, a.nextAction, STATUS[a.status]?.label, PHASE[a.phase]?.label, ...a.notes.map((n) => n.text)]
         .some((v) => String(v || "").toLowerCase().includes(q));
     });
   }
@@ -491,6 +511,7 @@
     const s = STATUS[a.status] || STATUS.offen;
     const d = daysSince(a.datum);
     const age = a.status === "offen" && d !== null ? relDays(d) : a.absageAm ? `Entscheid ${fmtDate(a.absageAm)}` : "";
+    const followUp = followUpChipHTML(a);
     return `
       <button class="card" data-id="${a.id}" style="--i:${Math.min(i, 24)};--c:${s.color}">
         <div class="avatar" style="--h:${hue(a.firma)}">${esc(privateInitials(a.firma))}</div>
@@ -501,6 +522,7 @@
             ${a.datum ? `<span>${ICONS.calendar}${fmtDateLong(a.datum)}</span>` : ""}
             ${a.links.length ? `<span>${ICONS.link}${a.links.length}</span>` : ""}
             ${a.notes.length ? `<span>${ICONS.note}${a.notes.length}</span>` : ""}
+            ${followUp}
             ${phaseTagHTML(a)}
           </div>
         </div>
@@ -509,6 +531,17 @@
           ${age ? `<span class="age">${age}</span>` : ""}
         </div>
       </button>`;
+  }
+
+  function followUpChipHTML(a) {
+    if (a.followUpDoneAt && (a.followUpAt || a.nextAction)) {
+      return `<span class="followup-chip done" title="Nachfassen erledigt">${ICONS.check} Erledigt</span>`;
+    }
+    if (!a.followUpAt) return "";
+    const delta = daysSince(a.followUpAt);
+    const overdue = delta >= 0;
+    const label = delta === 0 ? "Heute nachfassen" : delta > 0 ? `${delta} T. überfällig` : `Nachfassen ${relDays(delta)}`;
+    return `<span class="followup-chip ${overdue ? "overdue" : "upcoming"}" title="Nachfassen am ${fmtDate(a.followUpAt)}">${ICONS.flag}${label}</span>`;
   }
 
   function renderList() {
@@ -1180,6 +1213,7 @@
   const drawer = $("#drawer"), overlay = $("#overlay"), form = $("#form");
   const statusPicker = $("#statusPicker"), phaseStepper = $("#phaseStepper"), phaseDateWrap = $("#phaseDateWrap"), phaseDate = $("#phaseDate"), linksList = $("#linksList"), notesList = $("#notesList");
   const linkType = $("#linkType"), linkUrl = $("#linkUrl"), noteText = $("#noteText");
+  const followupState = $("#followupState"), snoozeFollowUpBtn = $("#snoozeFollowUpBtn"), completeFollowUpBtn = $("#completeFollowUpBtn");
   let lastFocus = null;
 
   linkType.innerHTML = LINK_TYPES.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
@@ -1187,7 +1221,8 @@
   function openDrawer(app) {
     state.isNew = !app;
     state.draft = app ? structuredClone(app) : {
-      id: uid(), firma: "", stelle: "", datum: todayISO(), status: "offen", phase: "beworben", phaseDates: {}, absageAm: "", links: [], notes: [], updated: Date.now(),
+      id: uid(), firma: "", stelle: "", datum: todayISO(), status: "offen", phase: "beworben", phaseDates: {}, absageAm: "",
+      contactName: "", contactEmail: "", nextAction: "", followUpAt: "", followUpDoneAt: "", links: [], notes: [], updated: Date.now(),
     };
     state.draftOriginal = JSON.stringify(state.draft);
     lastFocus = document.activeElement;
@@ -1196,12 +1231,16 @@
     form.stelle.value = state.draft.stelle;
     form.datum.value = state.draft.datum;
     form.absageAm.value = state.draft.absageAm;
+    form.contactName.value = state.draft.contactName || "";
+    form.contactEmail.value = state.draft.contactEmail || "";
+    form.nextAction.value = state.draft.nextAction || "";
+    form.followUpAt.value = parseDate(state.draft.followUpAt);
     form.firma.classList.remove("invalid");
     linkUrl.value = ""; noteText.value = "";
     linkType.value = "bestaetigung";
     $("#deleteBtn").hidden = state.isNew;
 
-    renderDrawerHead(); renderStatusPicker(); renderPhase(); renderLinks(); renderNotes();
+    renderDrawerHead(); renderStatusPicker(); renderPhase(); renderFollowUpControls(); renderLinks(); renderNotes();
 
     overlay.hidden = false;
     drawer.setAttribute("aria-hidden", "false");
@@ -1228,6 +1267,31 @@
     d.stelle = form.stelle.value.trim();
     d.datum = form.datum.value;
     d.absageAm = form.absageAm.value;
+    d.contactName = form.contactName.value.trim();
+    d.contactEmail = form.contactEmail.value.trim();
+    d.nextAction = form.nextAction.value.trim();
+    d.followUpAt = form.followUpAt.value;
+  }
+
+  function renderFollowUpControls() {
+    const d = state.draft;
+    const date = form.followUpAt.value;
+    followupState.className = "followup-state";
+    if (d.followUpDoneAt) {
+      const doneDate = parseDate(d.followUpDoneAt);
+      followupState.textContent = `Erledigt${doneDate ? ` am ${fmtDate(doneDate)}` : ""}`;
+      followupState.classList.add("done");
+      completeFollowUpBtn.textContent = "Reaktivieren";
+    } else if (date) {
+      const delta = daysSince(date);
+      followupState.textContent = delta === 0 ? "Heute fällig" : delta > 0 ? `Seit ${delta} Tag${delta === 1 ? "" : "en"} überfällig` : `Fällig ${relDays(delta)}`;
+      if (delta >= 0) followupState.classList.add("overdue");
+      completeFollowUpBtn.textContent = "Erledigt";
+    } else {
+      followupState.textContent = "Noch kein Nachfassdatum gesetzt";
+      completeFollowUpBtn.textContent = "Erledigt";
+    }
+    completeFollowUpBtn.disabled = !date && !form.nextAction.value.trim() && !d.followUpDoneAt;
   }
 
   function isDirty() {
@@ -1542,7 +1606,8 @@
       contactName: String(a.contactName || ""),
       contactEmail: String(a.contactEmail || ""),
       salaryText: String(a.salaryText || ""),
-      followUpAt: String(a.followUpAt || ""),
+      followUpAt: parseDate(a.followUpAt),
+      followUpDoneAt: String(a.followUpDoneAt || ""),
       nextAction: String(a.nextAction || ""),
       sourceMetadata: a.sourceMetadata && typeof a.sourceMetadata === "object" ? a.sourceMetadata : {},
       updated: a.updated || Date.now(),
@@ -1734,6 +1799,24 @@
   form.datum.addEventListener("change", renderPhase);
   form.firma.addEventListener("input", renderDrawerHead);
   form.stelle.addEventListener("input", renderDrawerHead);
+  form.nextAction.addEventListener("input", () => {
+    if (state.draft.followUpDoneAt) state.draft.followUpDoneAt = "";
+    renderFollowUpControls();
+  });
+  form.followUpAt.addEventListener("change", () => {
+    state.draft.followUpDoneAt = "";
+    renderFollowUpControls();
+  });
+  snoozeFollowUpBtn.addEventListener("click", () => {
+    form.followUpAt.value = addDaysISO(todayISO(), 7);
+    state.draft.followUpDoneAt = "";
+    renderFollowUpControls();
+    toast("Nachfassen auf in 7 Tagen gesetzt");
+  });
+  completeFollowUpBtn.addEventListener("click", () => {
+    state.draft.followUpDoneAt = state.draft.followUpDoneAt ? "" : new Date().toISOString();
+    renderFollowUpControls();
+  });
   $("#addLinkBtn").addEventListener("click", addLink);
   linkUrl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addLink(); } });
   $("#addNoteBtn").addEventListener("click", addNote);

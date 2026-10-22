@@ -30,6 +30,7 @@ alter table public.applications
   add column if not exists contact_email text,
   add column if not exists salary_text text,
   add column if not exists follow_up_at timestamptz,
+  add column if not exists follow_up_done_at timestamptz,
   add column if not exists next_action text,
   add column if not exists source_metadata jsonb not null default '{}'::jsonb;
 

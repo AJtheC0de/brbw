@@ -178,6 +178,38 @@
           <div class="status-picker" id="statusPicker"></div>
         </div>
 
+        <div class="block followup-block">
+          <div class="block-head">
+            <h3>Kontakt & nächste Schritte</h3>
+            <span class="muted small">Wen kontaktierst du wann?</span>
+          </div>
+          <div class="field-grid">
+            <label class="field">
+              <span>Ansprechpartner</span>
+              <input name="contactName" placeholder="z.B. Anna Keller">
+            </label>
+            <label class="field">
+              <span>Kontakt-E-Mail</span>
+              <input name="contactEmail" type="email" inputmode="email" placeholder="anna@firma.ch">
+            </label>
+            <label class="field field-wide">
+              <span>Nächste Aktion</span>
+              <input name="nextAction" placeholder="z.B. Nach dem Gespräch freundlich nachfragen">
+            </label>
+            <label class="field">
+              <span>Nachfassen am</span>
+              <input name="followUpAt" type="date">
+            </label>
+          </div>
+          <div class="followup-controls">
+            <span class="followup-state" id="followupState" aria-live="polite"></span>
+            <div class="followup-buttons">
+              <button type="button" class="btn ghost sm" id="snoozeFollowUpBtn">In 7 Tagen</button>
+              <button type="button" class="btn ghost sm done-btn" id="completeFollowUpBtn">Erledigt</button>
+            </div>
+          </div>
+        </div>
+
         <div class="block">
           <div class="block-head">
             <h3>Links</h3>
@@ -247,6 +279,10 @@
           <div class="spec-row" role="row"><b role="cell">Status</b><span role="cell">Optional</span><small role="cell">Offen, Angebot, Absage, Keine Antwort, Zurückgezogen</small></div>
           <div class="spec-row" role="row"><b role="cell">Verlauf</b><span role="cell">Optional</span><small role="cell">Beworben, 1. Gespräch, 2. Gespräch, Finale Runde</small></div>
           <div class="spec-row" role="row"><b role="cell">Absage am / Entscheid</b><span role="cell">Optional</span><small role="cell">TT.MM.JJJJ oder JJJJ-MM-TT</small></div>
+          <div class="spec-row" role="row"><b role="cell">Ansprechpartner</b><span role="cell">Optional</span><small role="cell">Name der Kontaktperson</small></div>
+          <div class="spec-row" role="row"><b role="cell">Kontakt-E-Mail</b><span role="cell">Optional</span><small role="cell">E-Mail der Kontaktperson</small></div>
+          <div class="spec-row" role="row"><b role="cell">Nächste Aktion</b><span role="cell">Optional</span><small role="cell">z.B. freundlich nachfragen</small></div>
+          <div class="spec-row" role="row"><b role="cell">Nachfassen am</b><span role="cell">Optional</span><small role="cell">TT.MM.JJJJ oder JJJJ-MM-TT</small></div>
           <div class="spec-row" role="row"><b role="cell">Nachweis Eingang</b><span role="cell">Optional</span><small role="cell">Link zur Bestätigung</small></div>
           <div class="spec-row" role="row"><b role="cell">Nachweis Outcome</b><span role="cell">Optional</span><small role="cell">Link zur Einladung oder Absage</small></div>
           <div class="spec-row" role="row"><b role="cell">Bemerkung</b><span role="cell">Optional</span><small role="cell">Mehrere Notizen mit | trennen</small></div>
