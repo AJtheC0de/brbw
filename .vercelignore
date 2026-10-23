@@ -1,0 +1,10 @@
+.git/
+.openai/
+.vercel/
+data/
+outputs/
+supabase/
+.env
+.env.*
+bewerbungsnachweis-*.csv
+README.md

@@ -6,13 +6,9 @@ type LimitResult = { allowed: boolean; remaining: number; reset_at: string };
 export async function enforceRateLimit(
   client: SupabaseClient,
   bucket: string,
-  maxRequests: number,
-  windowSeconds: number,
 ) {
   const { data, error } = await client.rpc("consume_rate_limit", {
     bucket_name: bucket,
-    max_requests: maxRequests,
-    window_seconds: windowSeconds,
   });
   if (error) throw new Error(`Rate limit check failed: ${error.message}`);
   const result = (data?.[0] || null) as LimitResult | null;

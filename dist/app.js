@@ -3,11 +3,13 @@
 
   /* ---------- Config ---------- */
   const STORAGE_KEY = "bwrb.applications.v1";
-  const OPEN_KEY = "bwrb.openMonths";
+  const OPEN_KEY = "bwrb.openMonths.v2";
   const SEED_FIX_KEY = "bwrb.seedFix";
   const SEED_FIX_VERSION = "2";
   const VIEW_KEY = "bwrb.view";
   const PRIVACY_KEY = "bwrb.privacyMode";
+  const MONTH_LAYOUT_KEY = "bwrb.monthLayout";
+  const ONBOARDING_RELEASE_AT = Date.parse("2026-10-22T23:20:00.000Z");
   const SUPABASE_URL = "https://coxmnerqoaclawbbgipx.supabase.co";
   const SUPABASE_KEY = "sb_publishable_2oKHLoM5fCrNiQ1FCpvPig_0Ci3zISR";
   clearLegacyApplicationStorage();
@@ -15,8 +17,17 @@
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
   });
   let currentUser = null;
+  let userProfile = null;
   let syncTimer = null;
   let syncGeneration = 0;
+  let authEpoch = 0;
+  let authAbortController = new AbortController();
+  let syncRunningEpoch = null;
+  let syncQueued = false;
+  const pendingDeletes = new Map();
+  const AI_BRIEF_INTERVAL = 5200;
+  let aiBriefTimer = null;
+  let aiBriefIndex = 0;
 
   // Ergebnis (outcome) – how it ended / where it stands
   const STATUSES = [
@@ -39,6 +50,10 @@
   const phaseIdx = (id) => Math.max(0, PHASES.findIndex((p) => p.id === id));
   const INTERVIEW_IDX = phaseIdx("gespraech1");
   const hadInterview = (a) => phaseIdx(a.phase) >= INTERVIEW_IDX;
+  const INTERVIEW_STAGES = {
+    screening: "Recruiter-Screening", first: "1. Gespräch", second: "2. Gespräch", final: "Finale Runde", other: "Weiteres Gespräch",
+  };
+  const INTERVIEW_FORMATS = { video: "Video", phone: "Telefon", onsite: "Vor Ort", other: "Andere" };
 
   const LINK_TYPES = [
     { id: "bestaetigung", label: "Bestätigung", color: "var(--s-offen)" },
@@ -50,11 +65,24 @@
   const LINK_TYPE = Object.fromEntries(LINK_TYPES.map((t) => [t.id, t]));
 
   const EMAIL_TEMPLATE_LABELS = {
-    follow7: "Freundliche Nachfrage nach 7 Tagen",
-    follow14: "Freundliche Nachfrage nach 14 Tagen",
-    follow21: "Freundliche Nachfrage nach 21 Tagen",
-    thanks: "Dankesmail nach dem Interview",
-    nextstep: "Nachfrage zum nächsten Prozessschritt",
+    de: {
+      follow7: "Freundliche Nachfrage nach 7 Tagen",
+      follow14: "Freundliche Nachfrage nach 14 Tagen",
+      follow21: "Freundliche Nachfrage nach 21 Tagen",
+      thanks: "Dankesmail nach dem Interview",
+      nextstep: "Nachfrage zum nächsten Prozessschritt",
+    },
+    en: {
+      follow7: "Friendly follow-up after 7 days",
+      follow14: "Friendly follow-up after 14 days",
+      follow21: "Friendly follow-up after 21 days",
+      thanks: "Thank-you email after the interview",
+      nextstep: "Ask about the next step",
+    },
+  };
+  const EMAIL_TEMPLATE_TAB_LABELS = {
+    de: { follow7: "Nach 7 Tagen", follow14: "Nach 14 Tagen", follow21: "Nach 21 Tagen", thanks: "Danke", nextstep: "Nächster Schritt" },
+    en: { follow7: "After 7 days", follow14: "After 14 days", follow21: "After 21 days", thanks: "Thank you", nextstep: "Next step" },
   };
 
   const MAGIC_IMPORT_ERRORS = {
@@ -85,12 +113,14 @@
 
   /* ---------- Helpers ---------- */
   const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => root.querySelectorAll(sel);
   const uid = () => globalThis.crypto?.randomUUID?.()
     || Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
   const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
   const safeId = (value) => SAFE_ID.test(String(value ?? "")) ? String(value) : uid();
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const todayISO = () => new Date().toISOString().slice(0, 10);
+  const nextUpdated = (application) => Math.max(Date.now(), (Number(application?._syncedUpdated) || 0) + 1);
   const addDaysISO = (iso, days) => {
     const date = new Date(`${parseDate(iso) || todayISO()}T12:00:00`);
     date.setDate(date.getDate() + days);
@@ -202,8 +232,32 @@
     if (!currentUser) return;
     clearTimeout(syncTimer);
     const generation = ++syncGeneration;
+    const expectedEpoch = authEpoch;
+    const expectedUserId = currentUser.id;
+    const signal = authAbortController.signal;
     setSyncState("syncing", "Speichert…");
-    syncTimer = setTimeout(() => syncRemote(generation), 350);
+    syncTimer = setTimeout(() => {
+      syncTimer = null;
+      void syncRemote(generation, expectedEpoch, expectedUserId, signal);
+    }, 350);
+  }
+
+  function isActiveAuthContext(expectedEpoch, expectedUserId) {
+    return authEpoch === expectedEpoch && currentUser?.id === expectedUserId;
+  }
+
+  function invalidateAuthWork() {
+    authAbortController.abort();
+    authAbortController = new AbortController();
+    syncQueued = false;
+    pendingDeletes.clear();
+    authEpoch += 1;
+    syncGeneration += 1;
+    if (syncTimer !== null) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+    }
+    return authEpoch;
   }
 
   function setSyncState(kind, label) {
@@ -214,9 +268,9 @@
     el.title = label;
   }
 
-  function toRow(a) {
+  function toRow(a, userId) {
     return {
-      id: String(a.id), user_id: currentUser.id, firma: a.firma, stelle: a.stelle || "",
+      id: String(a.id), user_id: userId, firma: a.firma, stelle: a.stelle || "",
       datum: a.datum || null, status: a.status, phase: a.phase,
       phase_dates: a.phaseDates || {}, entscheid_am: a.absageAm || null,
       links: a.links || [], notes: a.notes || [], updated_at: Number(a.updated || Date.now()),
@@ -244,29 +298,96 @@
       followUpAt: row.follow_up_at, followUpDoneAt: row.follow_up_done_at,
       nextAction: row.next_action,
       sourceMetadata: row.source_metadata,
+      _syncedUpdated: Number(row.updated_at) || 0,
     });
   }
 
-  async function syncRemote(generation) {
-    if (!currentUser || generation !== syncGeneration) return;
+  async function syncRemote(generation, expectedEpoch, expectedUserId, signal) {
+    if (signal.aborted || !isActiveAuthContext(expectedEpoch, expectedUserId) || generation !== syncGeneration) return;
+    if (syncRunningEpoch === expectedEpoch) {
+      syncQueued = true;
+      return;
+    }
+    syncRunningEpoch = expectedEpoch;
     try {
-      const rows = state.apps.map(toRow);
-      if (rows.length) {
-        const { error } = await db.from("applications").upsert(rows, { onConflict: "id" });
+      const snapshots = state.apps.map((app) => ({
+        app,
+        row: toRow(app, expectedUserId),
+        expectedUpdated: Number(app._syncedUpdated) || 0,
+      }));
+      const deletions = [...pendingDeletes.entries()];
+
+      for (const snapshot of snapshots) {
+        if (!isActiveAuthContext(expectedEpoch, expectedUserId) || signal.aborted) return;
+        if (snapshot.expectedUpdated === snapshot.row.updated_at) continue;
+
+        if (!snapshot.expectedUpdated) {
+          const { data, error } = await db.from("applications")
+            .insert(snapshot.row)
+            .select("updated_at")
+            .single()
+            .abortSignal(signal);
+          if (!isActiveAuthContext(expectedEpoch, expectedUserId) || signal.aborted) return;
+          if (error) throw error;
+          if (snapshot.app._syncedUpdated === snapshot.expectedUpdated) snapshot.app._syncedUpdated = Number(data.updated_at);
+          continue;
+        }
+
+        const { data, error } = await db.from("applications")
+          .update(snapshot.row)
+          .eq("user_id", expectedUserId)
+          .eq("id", snapshot.row.id)
+          .eq("updated_at", snapshot.expectedUpdated)
+          .select("updated_at")
+          .maybeSingle()
+          .abortSignal(signal);
+        if (!isActiveAuthContext(expectedEpoch, expectedUserId) || signal.aborted) return;
         if (error) throw error;
+        if (!data) {
+          const conflict = new Error("optimistic_conflict");
+          conflict.code = "OPTIMISTIC_CONFLICT";
+          throw conflict;
+        }
+        if (snapshot.app._syncedUpdated === snapshot.expectedUpdated) snapshot.app._syncedUpdated = Number(data.updated_at);
       }
-      const { data: existing, error: readError } = await db.from("applications").select("id");
-      if (readError) throw readError;
-      const keep = new Set(rows.map((r) => r.id));
-      const removed = (existing || []).map((r) => r.id).filter((id) => !keep.has(id));
-      if (removed.length) {
-        const { error } = await db.from("applications").delete().in("id", removed);
+
+      for (const [id, expectedUpdated] of deletions) {
+        if (!isActiveAuthContext(expectedEpoch, expectedUserId) || signal.aborted) return;
+        if (pendingDeletes.get(id) !== expectedUpdated) continue;
+        const { data, error } = await db.from("applications")
+          .delete()
+          .eq("user_id", expectedUserId)
+          .eq("id", id)
+          .eq("updated_at", expectedUpdated)
+          .select("id")
+          .maybeSingle()
+          .abortSignal(signal);
+        if (!isActiveAuthContext(expectedEpoch, expectedUserId) || signal.aborted) return;
         if (error) throw error;
+        if (!data) {
+          const conflict = new Error("optimistic_conflict");
+          conflict.code = "OPTIMISTIC_CONFLICT";
+          throw conflict;
+        }
+        if (pendingDeletes.get(id) === expectedUpdated) pendingDeletes.delete(id);
       }
-      if (generation === syncGeneration) setSyncState("", "Gespeichert");
+      if (isActiveAuthContext(expectedEpoch, expectedUserId) && generation === syncGeneration) setSyncState("", "Gespeichert");
     } catch (error) {
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId) || signal.aborted) return;
+      syncQueued = false;
       setSyncState("error", "Nicht synchronisiert");
-      toast(error.code === "42P01" ? "Supabase ist noch nicht eingerichtet" : "Cloud-Speicherung fehlgeschlagen");
+      toast(error.code === "OPTIMISTIC_CONFLICT"
+        ? "Änderungskonflikt: Bitte neu laden und erneut versuchen"
+        : error.code === "42P01" ? "Supabase ist noch nicht eingerichtet" : "Cloud-Speicherung fehlgeschlagen");
+    } finally {
+      if (syncRunningEpoch === expectedEpoch) {
+        syncRunningEpoch = null;
+        if (syncQueued && isActiveAuthContext(expectedEpoch, expectedUserId) && !signal.aborted) {
+          syncQueued = false;
+          const nextGeneration = syncGeneration;
+          queueMicrotask(() => void syncRemote(nextGeneration, expectedEpoch, expectedUserId, signal));
+        }
+      }
     }
   }
 
@@ -380,7 +501,11 @@
   }
 
   function appsToCSV(apps) {
-    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const q = (value) => {
+      const text = String(value ?? "");
+      const neutralized = /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
+      return `"${neutralized.replace(/"/g, '""')}"`;
+    };
     const header = ["Monat", "Bewerbung / Eingang", "Firma", "Stelle", "Status", "Verlauf", "Absage am", "Ansprechpartner", "Kontakt-E-Mail", "Nächste Aktion", "Nachfassen am", "Nachfassen erledigt", "Nachweis Eingang", "Nachweis Outcome", "Bemerkung"];
     const lines = [header.map(q).join(";")];
     for (const a of sortApps(apps, "date-desc")) {
@@ -407,6 +532,7 @@
   /* ---------- State ---------- */
   const state = {
     apps: [],
+    interviews: [],
     filter: "alle",
     query: "",
     sort: "date-desc",
@@ -414,6 +540,7 @@
     draftOriginal: "",
     isNew: false,
     view: "list",
+    monthLayout: (() => { try { return localStorage.getItem(MONTH_LAYOUT_KEY) === "list" ? "list" : "tiles"; } catch { return "tiles"; } })(),
     privacy: (() => { try { return localStorage.getItem(PRIVACY_KEY) === "1"; } catch { return false; } })(),
     openMonths: new Set((() => { try { return JSON.parse(localStorage.getItem(OPEN_KEY)) || []; } catch { return []; } })()),
   };
@@ -512,6 +639,292 @@
       : "Noch keine Bewerbungen";
   }
 
+  function aiApplicationFact(applications) {
+    const total = applications.length;
+    const facts = [];
+    const interviewCount = applications.filter(hadInterview).length;
+    const finishedCount = applications.filter((app) => app.status !== "offen").length;
+    const olderOpen = applications.filter((app) => app.status === "offen" && daysSince(app.datum) >= 14).length;
+    const monthlyCounts = new Map();
+    applications.forEach((app) => {
+      const key = /^\d{4}-\d{2}/.test(String(app.datum || "")) ? app.datum.slice(0, 7) : "";
+      if (key) monthlyCounts.set(key, (monthlyCounts.get(key) || 0) + 1);
+    });
+    const topMonth = [...monthlyCounts.entries()].sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))[0];
+
+    if (total && interviewCount) facts.push({
+      text: `${interviewCount} von ${total} Bewerbungen erreichten mindestens ein Gespräch – das sind ${Math.round(interviewCount / total * 100)} %.`,
+      action: "stats", label: "Statistiken ansehen",
+    });
+    if (topMonth) facts.push({
+      text: `Dein aktivster Monat war ${MONTHS[Number(topMonth[0].slice(5, 7)) - 1]} ${topMonth[0].slice(0, 4)} mit ${topMonth[1]} Bewerbungen.`,
+      action: "stats", label: "Verlauf ansehen",
+    });
+    if (total && finishedCount) facts.push({
+      text: `${finishedCount} deiner ${total} Bewerbungen haben bereits einen abgeschlossenen Status.`,
+      action: "stats", label: "Auswertung öffnen",
+    });
+    if (olderOpen) facts.push({
+      text: `${olderOpen} offene ${olderOpen === 1 ? "Bewerbung wartet" : "Bewerbungen warten"} seit mindestens 14 Tagen auf eine Rückmeldung.`,
+      action: "stats", label: "Offene Prozesse prüfen",
+    });
+    if (!facts.length) facts.push({
+      text: "Konkrete Resultate und Beispiele machen Berufserfahrung schneller greifbar als reine Eigenschaftswörter.",
+      action: "magic", label: "Bewerbung erfassen",
+    });
+
+    const dayIndex = Math.abs(Number(todayISO().replace(/-/g, ""))) % facts.length;
+    return {
+      id: `fact:${todayISO()}:${dayIndex}`,
+      completable: false,
+      tone: "fact", icon: "spark", title: "Bewerbungs-Fact",
+      ...facts[dayIndex],
+    };
+  }
+
+  function aiBriefItems() {
+    const today = todayISO();
+    const currentMonth = today.slice(0, 7);
+    const applications = state.draft && !state.isNew
+      ? state.apps.map((app) => app.id === state.draft.id ? state.draft : app)
+      : state.apps;
+    const monthCount = applications.filter((app) => String(app.datum || "").startsWith(currentMonth)).length;
+    const goal = Number(userProfile?.monthly_application_goal) || 0;
+    const completed = userProfile?.ai_completed_tasks && typeof userProfile.ai_completed_tasks === "object"
+      ? userProfile.ai_completed_tasks : {};
+    const dueFollowUps = applications
+      .filter((app) => app.status === "offen" && app.followUpAt && !app.followUpDoneAt && app.followUpAt <= today)
+      .sort((a, b) => String(a.followUpAt).localeCompare(String(b.followUpAt)));
+    const dueIds = new Set(dueFollowUps.map((app) => app.id));
+    const staleApplications = applications
+      .filter((app) => app.status === "offen" && !app.followUpDoneAt && !hadInterview(app) && daysSince(app.datum) >= 7)
+      .filter((app) => !dueIds.has(app.id))
+      .sort((a, b) => daysSince(b.datum) - daysSince(a.datum));
+    const activeInterviews = applications
+      .filter((app) => app.status === "offen" && hadInterview(app))
+      .sort((a, b) => (b.updated || 0) - (a.updated || 0));
+
+    const followUpItems = [];
+    const goalItems = [];
+    const interviewItems = [];
+    const momentumItems = [];
+
+    dueFollowUps.forEach((dueFollowUp) => {
+      followUpItems.push({
+        id: `followup:${dueFollowUp.id}:${dueFollowUp.followUpAt}`,
+        tone: "attention", icon: "mail", title: "Nachfassen ist heute fällig",
+        text: `Bei ${privateCompany(dueFollowUp.firma)} wartet eine geplante Nachfrage.`,
+        action: "followup", appId: dueFollowUp.id, label: "E-Mail vorbereiten",
+      });
+    });
+    staleApplications.forEach((staleApplication) => {
+      const days = daysSince(staleApplication.datum);
+      followUpItems.push({
+        id: `stale:${staleApplication.id}:${staleApplication.datum}`,
+        tone: "attention", icon: "clock", title: `Seit ${days} Tagen keine Rückmeldung`,
+        text: `Du hast dich bei ${privateCompany(staleApplication.firma)} beworben. Möchtest du freundlich nachfragen?`,
+        action: "followup", appId: staleApplication.id, label: "Nachfrage erstellen",
+      });
+    });
+
+    if (goal > 0) {
+      const remaining = Math.max(0, goal - monthCount);
+      goalItems.push(remaining > 0 ? {
+        id: `goal:${currentMonth}:${goal}:${monthCount}`,
+        tone: "goal", icon: "target", title: `Noch ${remaining} bis zu deinem Monatsziel`,
+        text: `${monthCount} von ${goal} Bewerbungen sind diesen Monat geschafft.`,
+        action: "add", label: "Bewerbung hinzufügen",
+      } : {
+        id: `goal:${currentMonth}:${goal}:${monthCount}`,
+        tone: "success", icon: "spark", title: "Monatsziel erreicht",
+        text: `Stark – du hast diesen Monat ${monthCount} Bewerbungen erfasst.`,
+        action: "stats", label: "Fortschritt ansehen",
+      });
+    } else {
+      goalItems.push({
+        id: "goal:setup",
+        tone: "goal", icon: "target", title: "Setze dir ein Monatsziel",
+        text: "Mit einem persönlichen Ziel zeigt dir Jobply jederzeit, wie viele Bewerbungen noch fehlen.",
+        action: "settings", label: "Ziel festlegen",
+      });
+    }
+
+    activeInterviews.forEach((activeInterview) => {
+      interviewItems.push({
+        id: `interview:${activeInterview.id}:${activeInterview.phase}:${activeInterview.phaseDates?.[activeInterview.phase] || ""}`,
+        tone: "calm", icon: "briefcase", title: "Gespräch im Blick behalten",
+        text: `${privateCompany(activeInterview.firma)} befindet sich in der Phase „${PHASE[activeInterview.phase]?.label || "Gespräch"}“.`,
+        action: "open", appId: activeInterview.id, label: "Vorbereitung öffnen",
+      });
+      if (!activeInterview.contactEmail) interviewItems.push({
+        id: `contact:${activeInterview.id}:${activeInterview.phase}`,
+        tone: "goal", icon: "mail", title: "Kontakt für den nächsten Schritt ergänzen",
+        text: `Bei ${privateCompany(activeInterview.firma)} fehlt noch eine Kontakt-E-Mail für dein Follow-up.`,
+        action: "followup", appId: activeInterview.id, label: "Kontakt ergänzen",
+      });
+    });
+
+    const thisWeekCount = applications.filter((app) => {
+      const age = daysSince(app.datum);
+      return age !== null && age >= 0 && age < 7;
+    }).length;
+    momentumItems.push(thisWeekCount ? {
+      id: `momentum:${today}:${thisWeekCount}`, completable: false,
+      tone: "success", icon: "spark", title: `Diese Woche schon ${thisWeekCount} ${thisWeekCount === 1 ? "Bewerbung" : "Bewerbungen"}`,
+      text: "Guter Rhythmus. Prüfe als Nächstes, ob alle offenen Prozesse einen klaren nächsten Schritt haben.",
+      action: "add", label: "Weitere hinzufügen",
+    } : {
+      id: `momentum:${today}:0`, completable: false,
+      tone: "calm", icon: "spark", title: "Starte mit einem kleinen Schritt",
+      text: "Diese Woche ist noch keine neue Bewerbung erfasst. Ein interessanter Job-Link reicht für den Magic Import.",
+      action: "magic", label: "Magic Import starten",
+    });
+
+    const groups = [followUpItems, goalItems, interviewItems, momentumItems];
+    const selected = [];
+    const isPending = (item) => item.completable === false || !completed[item.id];
+    groups.forEach((group) => {
+      if (selected.length >= 3) return;
+      const item = group.find((candidate) => isPending(candidate));
+      if (item) selected.push(item);
+    });
+    const selectedIds = new Set(selected.map((item) => item.id));
+    groups.flat().filter(isPending).forEach((item) => {
+      if (selected.length < 3 && !selectedIds.has(item.id)) {
+        selected.push(item);
+        selectedIds.add(item.id);
+      }
+    });
+    if (!selected.length) selected.push({
+      id: `clear:${currentMonth}`, completable: false,
+      tone: "calm", icon: "spark", title: "Alles auf dem aktuellen Stand",
+      text: "Es gibt gerade keine dringenden Aufgaben. Neue Stellen kannst du direkt per Magic Import erfassen.",
+      action: "magic", label: "Magic Import starten",
+    });
+
+    return [...selected.slice(0, 3), aiApplicationFact(applications)];
+  }
+
+  function renderAiBrief() {
+    const element = $("#aiBrief");
+    const items = aiBriefItems();
+    const icons = {
+      mail: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 7l9 6 9-6"/></svg>',
+      clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+      target: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M15 9l5-5"/></svg>',
+      spark: '<svg viewBox="0 0 24 24"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z"/><path d="M19 15l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15Z"/></svg>',
+      briefcase: ICONS.briefcase,
+    };
+    stopAiBriefCarousel();
+    aiBriefIndex = 0;
+    element.innerHTML = `
+      <div class="ai-brief-head">
+        <div><span class="ai-mark">AI</span><strong>Dein Tagesbriefing</strong></div>
+        <div class="ai-carousel-meta">
+          <small data-ai-counter>1 / ${items.length}</small>
+          <div class="ai-carousel-dots" aria-label="Briefing-Hinweise">
+            ${items.map((_, index) => `<button type="button" class="${index === 0 ? "active" : ""}" data-ai-slide="${index}" aria-label="Hinweis ${index + 1} anzeigen" aria-current="${index === 0 ? "true" : "false"}"></button>`).join("")}
+          </div>
+        </div>
+      </div>
+      <div class="ai-carousel-viewport">
+        ${items.map((item, index) => `
+          <article class="ai-brief-item ${item.tone} ${index === 0 ? "active" : ""}" aria-hidden="${index === 0 ? "false" : "true"}">
+            ${item.completable === false ? '<span class="ai-task-check-placeholder"></span>' : `<button type="button" class="ai-task-check" data-ai-complete="${esc(item.id)}" aria-label="Aufgabe „${esc(item.title)}“ erledigen"><svg viewBox="0 0 24 24"><path d="M6 12.5l4 4L18.5 8"/></svg></button>`}
+            <span class="ai-brief-icon">${icons[item.icon] || icons.spark}</span>
+            <div><strong>${esc(item.title)}</strong><p>${esc(item.text)}</p></div>
+            <button type="button" data-ai-action="${esc(item.action)}" ${item.appId ? `data-ai-app-id="${esc(item.appId)}"` : ""}>${esc(item.label)}<span>→</span></button>
+          </article>`).join("")}
+      </div>`;
+    scheduleAiBriefCarousel();
+  }
+
+  async function completeAiTask(taskId, article) {
+    if (!taskId || !currentUser?.id || !userProfile) return;
+    const expectedUserId = currentUser.id;
+    const expectedEpoch = authEpoch;
+    const previous = userProfile.ai_completed_tasks && typeof userProfile.ai_completed_tasks === "object"
+      ? { ...userProfile.ai_completed_tasks } : {};
+    article?.classList.add("completing");
+    await new Promise((resolve) => setTimeout(resolve, 280));
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
+    const cutoff = Date.now() - 120 * 86400000;
+    const completed = Object.fromEntries(Object.entries(previous).filter(([, date]) => {
+      const timestamp = Date.parse(String(date));
+      return Number.isFinite(timestamp) && timestamp >= cutoff;
+    }));
+    completed[taskId] = new Date().toISOString();
+    userProfile = { ...userProfile, ai_completed_tasks: completed };
+    renderAiBrief();
+    const { error } = await db.from("user_profiles").upsert({
+      user_id: expectedUserId,
+      ai_completed_tasks: completed,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+    if (error && isActiveAuthContext(expectedEpoch, expectedUserId)) {
+      userProfile = { ...userProfile, ai_completed_tasks: previous };
+      renderAiBrief();
+      toast("Aufgabe konnte nicht gespeichert werden");
+      return;
+    }
+    if (isActiveAuthContext(expectedEpoch, expectedUserId) && /^(followup|stale):/.test(taskId)) {
+      const appId = taskId.split(":")[1];
+      const application = state.apps.find((app) => app.id === appId);
+      if (application && !application.followUpDoneAt) {
+        application.followUpDoneAt = todayISO();
+        application.updated = nextUpdated(application);
+        persist();
+        render();
+        toast("Als nachgefragt im Verlauf eingetragen");
+      }
+    }
+  }
+
+  function stopAiBriefCarousel() {
+    if (aiBriefTimer) clearTimeout(aiBriefTimer);
+    aiBriefTimer = null;
+  }
+
+  function scheduleAiBriefCarousel() {
+    stopAiBriefCarousel();
+    const slides = [...$("#aiBrief").querySelectorAll(".ai-brief-item")];
+    if (slides.length < 2 || document.hidden) return;
+    aiBriefTimer = setTimeout(() => showAiBriefSlide(aiBriefIndex + 1), AI_BRIEF_INTERVAL);
+  }
+
+  function showAiBriefSlide(nextIndex) {
+    const element = $("#aiBrief");
+    const slides = [...element.querySelectorAll(".ai-brief-item")];
+    if (!slides.length) return;
+    const next = ((nextIndex % slides.length) + slides.length) % slides.length;
+    const current = slides.findIndex((slide) => slide.classList.contains("active"));
+
+    if (current !== next) {
+      if (current >= 0) {
+        const outgoing = slides[current];
+        outgoing.classList.remove("active");
+        outgoing.classList.add("leaving");
+        outgoing.setAttribute("aria-hidden", "true");
+        setTimeout(() => {
+          if (outgoing.isConnected) outgoing.classList.remove("leaving");
+        }, 720);
+      }
+      const incoming = slides[next];
+      incoming.classList.remove("leaving");
+      requestAnimationFrame(() => incoming.classList.add("active"));
+      incoming.setAttribute("aria-hidden", "false");
+    }
+
+    aiBriefIndex = next;
+    const counter = element.querySelector("[data-ai-counter]");
+    if (counter) counter.textContent = `${next + 1} / ${slides.length}`;
+    element.querySelectorAll("[data-ai-slide]").forEach((dot, index) => {
+      dot.classList.toggle("active", index === next);
+      dot.setAttribute("aria-current", index === next ? "true" : "false");
+    });
+    scheduleAiBriefCarousel();
+  }
+
   function renderFilters() {
     const counts = { alle: state.apps.length };
     STATUSES.forEach((s) => (counts[s.id] = state.apps.filter((a) => a.status === s.id).length));
@@ -568,6 +981,12 @@
   }
 
   function renderList() {
+    els.list.classList.remove("months-grid", "months-list");
+    $("#layoutSwitch").querySelectorAll("[data-layout]").forEach((button) => {
+      const active = button.dataset.layout === state.monthLayout;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
     const apps = visibleApps();
     if (!state.apps.length) {
       els.list.innerHTML = `
@@ -594,6 +1013,7 @@
       els.list.innerHTML = apps.map(cardHTML).join("");
       return;
     }
+    els.list.classList.add(state.monthLayout === "tiles" ? "months-grid" : "months-list");
 
     // group by month, keeping the sort order
     const groups = new Map();
@@ -603,10 +1023,7 @@
       groups.get(key).push(a);
     }
     const searching = !!state.query.trim();
-    let html = `
-      <div class="list-tools">
-        <button class="text-btn" data-toggle-all>${groups.size && [...groups.keys()].every((k) => state.openMonths.has(k)) ? "Alle zuklappen" : "Alle aufklappen"}</button>
-      </div>`;
+    let html = "";
     let gi = 0;
     for (const [key, list] of groups) {
       const open = searching || state.openMonths.has(key);
@@ -646,13 +1063,18 @@
   function toggleMonth(section) {
     const key = section.dataset.month;
     const open = !section.classList.contains("open");
+    if (open) {
+      els.list.querySelectorAll(".month.open").forEach((month) => {
+        if (month === section) return;
+        month.classList.remove("open");
+        month.querySelector(".month-head")?.setAttribute("aria-expanded", "false");
+      });
+      state.openMonths.clear();
+    }
     section.classList.toggle("open", open);
     section.querySelector(".month-head").setAttribute("aria-expanded", open);
     open ? state.openMonths.add(key) : state.openMonths.delete(key);
     saveOpenMonths();
-    const allOpen = [...els.list.querySelectorAll(".month")].every((m) => m.classList.contains("open"));
-    const tg = els.list.querySelector("[data-toggle-all]");
-    if (tg) tg.textContent = allOpen ? "Alle zuklappen" : "Alle aufklappen";
     if (open) setTimeout(() => {
       const r = section.getBoundingClientRect();
       if (r.bottom > innerHeight) section.scrollIntoView({ behavior: "smooth", block: r.height > innerHeight ? "start" : "nearest" });
@@ -1211,22 +1633,166 @@
       </div>`;
   }
 
+  function interviewApplication(interview) {
+    return state.apps.find((application) => application.id === interview.application_id) || null;
+  }
+
+  function interviewPrepHTML(prep) {
+    if (!prep || typeof prep !== "object") return "";
+    const questions = Array.isArray(prep.recruiterQuestions) ? prep.recruiterQuestions : [];
+    const candidateQuestions = Array.isArray(prep.candidateQuestions) ? prep.candidateQuestions : [];
+    const focusPoints = Array.isArray(prep.focusPoints) ? prep.focusPoints : [];
+    return `
+      <section class="prep-panel">
+        <div class="prep-hero">
+          <div class="prep-box"><h4>Was sucht das Unternehmen?</h4><p>${esc(prep.roleSummary || "–")}</p></div>
+          <div class="prep-box"><h4>Dein Einstieg</h4><p>${esc(prep.openingPitch || "–")}</p></div>
+          <div class="prep-box"><h4>Darauf solltest du achten</h4><ul>${focusPoints.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>
+          <div class="prep-box"><h4>Deine Fragen</h4><ul>${candidateQuestions.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>
+        </div>
+        <div class="prep-questions"><h4>Mögliche Recruiter-Fragen</h4>${questions.map((item) => `
+          <article class="prep-question"><strong>${esc(item.question || "")}</strong><p>${esc(item.answer || "")}</p><span class="prep-evidence">${esc(item.evidence || "Allgemeiner Vorschlag")}</span></article>`).join("")}</div>
+      </section>`;
+  }
+
+  function renderInterviews() {
+    const overview = $("#interviewOverview"), list = $("#interviewList");
+    if (!overview || !list) return;
+    const now = Date.now();
+    const ordered = [...state.interviews].sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at));
+    const upcoming = ordered.filter((item) => new Date(item.scheduled_at).getTime() >= now);
+    const prepared = ordered.filter((item) => item.ai_prep).length;
+    overview.innerHTML = `
+      <div class="interview-summary-card"><span>Kommende Gespräche</span><strong>${upcoming.length}</strong></div>
+      <div class="interview-summary-card"><span>Vorbereitet</span><strong>${prepared}</strong></div>
+      <div class="interview-summary-card"><span>Gesamt</span><strong>${ordered.length}</strong></div>`;
+    if (!ordered.length) {
+      list.innerHTML = `<div class="interview-empty"><div class="empty-icon">${ICONS.calendar}</div><h3>Noch kein Gespräch geplant</h3><p>Hänge dein erstes Bewerbungsgespräch an eine Bewerbung und lass dir auf Wunsch eine persönliche Vorbereitung erstellen.</p><button class="btn primary" type="button" data-interview-add>Gespräch hinzufügen</button></div>`;
+      return;
+    }
+    const display = [...upcoming, ...ordered.filter((item) => !upcoming.includes(item)).reverse()];
+    list.innerHTML = display.map((interview) => {
+      const application = interviewApplication(interview);
+      const date = new Date(interview.scheduled_at);
+      const past = date.getTime() < now;
+      const expanded = interview._expanded && interview.ai_prep;
+      return `<article class="interview-card ${past ? "past" : ""}" data-interview-id="${esc(interview.id)}">
+        <div class="interview-date"><b>${String(date.getDate()).padStart(2, "0")}</b><span>${MONTHS[date.getMonth()].slice(0,3)} · ${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}</span></div>
+        <div class="interview-main"><h3>${esc(privateCompany(application?.firma || "Unbekannte Firma"))}</h3><p>${esc(application?.stelle || "Bewerbung")}</p>
+          <div class="interview-meta"><span>${esc(INTERVIEW_STAGES[interview.stage] || INTERVIEW_STAGES.other)}</span><span>${esc(INTERVIEW_FORMATS[interview.format] || INTERVIEW_FORMATS.other)}</span>${interview.interviewer ? `<span>${esc(interview.interviewer)}</span>` : ""}</div>
+        </div>
+        <div class="interview-actions">
+          ${interview.meeting_url ? `<a class="btn ghost sm" href="${esc(interview.meeting_url)}" target="_blank" rel="noopener noreferrer">Meeting</a>` : ""}
+          <button class="btn ${interview.ai_prep ? "ghost" : "primary"} sm" type="button" data-interview-prep>${interview.ai_prep ? (expanded ? "Vorbereitung schließen" : "Vorbereitung öffnen") : "KI-Vorbereitung"}</button>
+          ${interview.ai_prep ? `<button class="btn ghost sm" type="button" data-interview-regenerate>Neu erstellen</button>` : ""}
+          <button class="btn ghost sm" type="button" data-interview-delete aria-label="Gespräch löschen">×</button>
+        </div>
+        ${expanded ? interviewPrepHTML(interview.ai_prep) : ""}
+      </article>`;
+    }).join("");
+  }
+
+  const interviewOverlay = $("#interviewOverlay"), interviewDialog = $("#interviewDialog"), interviewForm = $("#interviewForm");
+
+  function openInterviewDialog(applicationId = "") {
+    if (!state.apps.length) { toast("Erstelle zuerst eine Bewerbung"); return openDrawer(null); }
+    const select = $("#interviewApplication");
+    select.innerHTML = sortApps(state.apps, "date-desc").map((application) => `<option value="${esc(application.id)}">${esc(application.firma)} · ${esc(application.stelle || "Ohne Stellenbezeichnung")}</option>`).join("");
+    select.value = state.apps.some((application) => application.id === applicationId) ? applicationId : select.options[0]?.value || "";
+    const start = new Date(Date.now() + 86400000); start.setMinutes(0, 0, 0);
+    $("#interviewDate").value = new Date(start.getTime() - start.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+    $("#interviewStage").value = "first"; $("#interviewFormat").value = "video";
+    $("#interviewInterviewer").value = ""; $("#interviewMeetingUrl").value = ""; $("#interviewNotes").value = "";
+    $("#interviewMessage").textContent = "";
+    $("#interviewCvNudge").hidden = Boolean(userProfile?.cv_path);
+    interviewOverlay.hidden = false; interviewDialog.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    requestAnimationFrame(() => { interviewOverlay.classList.add("show"); interviewDialog.classList.add("open"); });
+    setTimeout(() => select.focus({ preventScroll: true }), 120);
+  }
+
+  function closeInterviewDialog() {
+    interviewOverlay.classList.remove("show"); interviewDialog.classList.remove("open"); interviewDialog.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
+    setTimeout(() => { if (!interviewDialog.classList.contains("open")) interviewOverlay.hidden = true; }, 250);
+  }
+
+  async function saveInterview(event) {
+    event.preventDefault();
+    if (!currentUser?.id) return;
+    const submit = interviewForm.querySelector('[type="submit"]');
+    const applicationId = $("#interviewApplication").value;
+    const scheduled = new Date($("#interviewDate").value);
+    if (!applicationId || !Number.isFinite(scheduled.getTime())) return $("#interviewMessage").textContent = "Bitte Bewerbung und Termin auswählen.";
+    submit.disabled = true; $("#interviewMessage").textContent = "Gespräch wird gespeichert…";
+    const row = {
+      user_id: currentUser.id, application_id: applicationId, scheduled_at: scheduled.toISOString(),
+      stage: $("#interviewStage").value, format: $("#interviewFormat").value,
+      interviewer: $("#interviewInterviewer").value.trim().slice(0,120) || null,
+      meeting_url: normalizedWebUrl($("#interviewMeetingUrl").value) || null,
+      notes: $("#interviewNotes").value.trim().slice(0,2000), updated_at: new Date().toISOString(),
+    };
+    try {
+      const { data, error } = await db.from("interviews").insert(row).select("*").single();
+      if (error) throw error;
+      state.interviews.push(data); closeInterviewDialog(); renderInterviews(); toast("Gespräch hinzugefügt");
+    } catch (error) {
+      $("#interviewMessage").textContent = error.code === "42P01" ? "Die Gesprächs-Datenbank ist noch nicht eingerichtet." : "Gespräch konnte nicht gespeichert werden.";
+    } finally { submit.disabled = false; }
+  }
+
+  async function createInterviewPrep(interview) {
+    const button = $(`[data-interview-id="${CSS.escape(interview.id)}"] [data-interview-prep]`);
+    if (button) { button.disabled = true; button.textContent = "KI bereitet vor…"; }
+    try {
+      const { data, error } = await db.functions.invoke("interview-prep", { body: { interviewId: interview.id } });
+      if (error || !data?.ok) throw new Error(data?.error || "prep_failed");
+      interview.ai_prep = data.prep; interview.ai_prepared_at = data.preparedAt; interview._expanded = true;
+      renderInterviews();
+      toast(data.enrichedFromUrl ? "Inserat gelesen und Vorbereitung neu erstellt" : data.usedCv ? "Persönliche Vorbereitung erstellt" : "Vorbereitung ohne CV erstellt");
+    } catch { toast("KI-Vorbereitung konnte nicht erstellt werden"); if (button) { button.disabled = false; button.textContent = "KI-Vorbereitung"; } }
+  }
+
+  async function deleteInterview(interview) {
+    if (!confirm("Dieses Gespräch wirklich löschen?")) return;
+    const { error } = await db.from("interviews").delete().eq("id", interview.id).eq("user_id", currentUser.id);
+    if (error) return toast("Gespräch konnte nicht gelöscht werden");
+    state.interviews = state.interviews.filter((item) => item.id !== interview.id); renderInterviews(); toast("Gespräch gelöscht");
+  }
+
   function setView(view) {
-    state.view = view;
+    state.view = ["list", "interviews", "insights"].includes(view) ? view : "list";
     try { localStorage.setItem(VIEW_KEY, view); } catch {}
-    history.replaceState(null, "", view === "insights" ? "#statistiken" : location.pathname + location.search);
-    $("#viewList").hidden = view !== "list";
-    $("#viewInsights").hidden = view !== "insights";
-    document.querySelectorAll("#tabs .tab").forEach((t) => {
-      const on = t.dataset.view === view;
-      t.classList.toggle("active", on);
-      t.setAttribute("aria-selected", on);
+    const hash = state.view === "insights" ? "#statistiken" : state.view === "interviews" ? "#gespraeche" : location.pathname + location.search;
+    history.replaceState(null, "", hash);
+    $("#viewList").hidden = state.view !== "list";
+    $("#viewInterviews").hidden = state.view !== "interviews";
+    $("#viewInsights").hidden = state.view !== "insights";
+    const copy = {
+      list: ["Dashboard", "Deine Bewerbungen", "Alles an einem Ort – vom ersten Versand bis zum Angebot."],
+      interviews: ["Interview Workspace", "Deine Gespräche", "Termine, Vorbereitung und Gesprächsnotizen an einem Ort."],
+      insights: ["Analytics", "Deine Statistiken", "Trends, Erfolgsquoten und Fortschritt deiner Jobsuche."],
+    }[state.view];
+    $("#dashboardKicker").textContent = copy[0];
+    $("#dashboardTitle").textContent = copy[1];
+    $("#subtitle").textContent = copy[2];
+    const addLabel = $("#addBtn span");
+    addLabel.textContent = state.view === "interviews" ? "Gespräch hinzufügen" : "Neue Bewerbung";
+    $("#addBtn").querySelector("svg").style.display = state.view === "insights" ? "none" : "";
+    $("#addBtn").hidden = state.view === "insights";
+    $$('[data-workspace-view]').forEach((button) => {
+      const active = button.dataset.workspaceView === state.view;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+      if (active) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
     });
-    if (view === "insights") renderInsights();
+    if (state.view === "insights") renderInsights();
+    if (state.view === "interviews") renderInterviews();
   }
 
   function render({ transition = false } = {}) {
-    const run = () => { renderStats(); renderFilters(); renderList(); if (state.view === "insights") renderInsights(); };
+    const run = () => { renderStats(); renderAiBrief(); renderFilters(); renderList(); if (state.view === "insights") renderInsights(); if (state.view === "interviews") renderInterviews(); };
     if (transition && document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
       document.startViewTransition(run);
     } else run();
@@ -1237,15 +1803,29 @@
   const statusPicker = $("#statusPicker"), phaseStepper = $("#phaseStepper"), phaseDateWrap = $("#phaseDateWrap"), phaseDate = $("#phaseDate"), linksList = $("#linksList"), notesList = $("#notesList");
   const linkType = $("#linkType"), linkUrl = $("#linkUrl"), noteText = $("#noteText");
   const followupState = $("#followupState"), snoozeFollowUpBtn = $("#snoozeFollowUpBtn"), completeFollowUpBtn = $("#completeFollowUpBtn");
+  const followupBlock = $(".followup-block"), followupToggle = $("#followupToggle");
   const magicImport = $(".magic-import"), jobImportUrl = $("#jobImportUrl"), magicImportStatus = $("#magicImportStatus"), runMagicImportBtn = $("#runMagicImportBtn");
-  const emailTemplateTabs = $("#emailTemplateTabs"), emailSubject = $("#emailSubject"), emailBody = $("#emailBody");
-  const emailRecipient = $("#emailRecipient"), emailComposerHint = $("#emailComposerHint");
+  const emailTemplateTabs = $("#emailTemplateTabs"), emailLanguagePicker = $("#emailLanguagePicker");
+  const emailSubject = $("#emailSubject"), emailBody = $("#emailBody");
+  const emailRecipient = $("#emailRecipient"), emailComposerHint = $("#emailComposerHint"), markEmailSentBtn = $("#markEmailSentBtn");
   const formField = (name) => form.elements.namedItem(name);
   let lastFocus = null;
   let emailTemplateId = "follow7";
+  let emailLanguage = "de";
   let emailTextCustomized = false;
+  let timelineDateMode = "phase";
 
   linkType.innerHTML = LINK_TYPES.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
+
+  function setFollowupExpanded(expanded) {
+    if (expanded) {
+      const followupContent = $("#followupContent");
+      const expandedHeight = followupToggle.offsetHeight + followupContent.scrollHeight + 2;
+      followupBlock.style.setProperty("--followup-expanded-height", `${expandedHeight}px`);
+    }
+    followupBlock.classList.toggle("expanded", expanded);
+    followupToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  }
 
   function openDrawer(app, { focusMagic = false } = {}) {
     state.isNew = !app;
@@ -1253,9 +1833,11 @@
       id: uid(), firma: "", stelle: "", datum: todayISO(), status: "offen", phase: "beworben", phaseDates: {}, absageAm: "",
       contactName: "", contactEmail: "", nextAction: "", followUpAt: "", followUpDoneAt: "",
       jobUrl: "", jobDescription: "", companyLogoUrl: "", location: "", employmentType: "", workload: "", workModel: "", salaryText: "", sourceMetadata: {},
-      links: [], notes: [], updated: Date.now(),
+      links: [], notes: [], updated: Date.now(), _syncedUpdated: 0,
     };
     state.draftOriginal = JSON.stringify(state.draft);
+    timelineDateMode = state.draft.status === "absage" ? "outcome" : "phase";
+    setFollowupExpanded(false);
     lastFocus = document.activeElement;
 
     form.firma.value = state.draft.firma;
@@ -1273,6 +1855,8 @@
     formField("salaryText").value = state.draft.salaryText || "";
     formField("jobDescription").value = state.draft.jobDescription || "";
     jobImportUrl.value = state.draft.jobUrl || "";
+    runMagicImportBtn.disabled = false;
+    $("#pasteJobUrlBtn").disabled = false;
     setMagicStatus("");
     form.firma.classList.remove("invalid");
     linkUrl.value = ""; noteText.value = "";
@@ -1281,11 +1865,15 @@
 
     renderDrawerHead(); renderStatusPicker(); renderPhase(); renderFollowUpControls(); renderLinks(); renderNotes();
     emailTemplateId = "follow7";
+    emailLanguage = "de";
     emailTextCustomized = false;
     renderEmailComposer(true);
 
     overlay.hidden = false;
     drawer.setAttribute("aria-hidden", "false");
+    const drawerBody = drawer.querySelector(".drawer-body");
+    drawerBody.scrollTop = 0;
+    drawerBody.scrollLeft = 0;
     document.body.style.overflow = "hidden";
     requestAnimationFrame(() => { overlay.classList.add("show"); drawer.classList.add("open"); });
     setTimeout(() => (focusMagic ? jobImportUrl : state.isNew ? form.firma : drawer.querySelector(".drawer-head .icon-btn")).focus({ preventScroll: true }), 120);
@@ -1300,6 +1888,7 @@
     document.body.style.overflow = "";
     setTimeout(() => { if (!drawer.classList.contains("open")) overlay.hidden = true; }, 350);
     state.draft = null;
+    renderAiBrief();
     lastFocus?.focus?.({ preventScroll: true });
   }
 
@@ -1337,6 +1926,10 @@
 
   async function runMagicImport() {
     if (!state.draft || runMagicImportBtn.disabled) return;
+    const expectedEpoch = authEpoch;
+    const expectedUserId = currentUser?.id;
+    const expectedDraft = state.draft;
+    if (!expectedUserId) return;
     const url = normalizedWebUrl(jobImportUrl.value);
     if (!url) {
       setMagicStatus("Bitte füge einen gültigen Job-Link ein.", "error");
@@ -1349,6 +1942,7 @@
     setMagicStatus("Stellenanzeige wird gelesen und mit OpenAI ausgewertet …", "loading");
     try {
       const { data, error } = await db.functions.invoke("magic-import", { body: { url } });
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId) || state.draft !== expectedDraft) return;
       if (error) {
         let code = "";
         try { code = String((await error.context?.json?.())?.error || ""); } catch {}
@@ -1389,8 +1983,10 @@
       const confidence = Math.round((Number(result.confidence) || 0) * 100);
       setMagicStatus(`${filled} Felder übernommen${confidence ? ` · ${confidence}% Erkennungssicherheit` : ""}. Bitte kurz prüfen.`, "success");
     } catch (error) {
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId) || state.draft !== expectedDraft) return;
       setMagicStatus(error.publicMessage || "Magic Import ist gerade nicht verfügbar.", "error");
     } finally {
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId) || state.draft !== expectedDraft) return;
       runMagicImportBtn.disabled = false;
       $("#pasteJobUrlBtn").disabled = false;
     }
@@ -1415,6 +2011,12 @@
       completeFollowUpBtn.textContent = "Erledigt";
     }
     completeFollowUpBtn.disabled = !date && !form.nextAction.value.trim() && !d.followUpDoneAt;
+    const sentDate = parseDate(d.followUpDoneAt);
+    markEmailSentBtn.disabled = Boolean(sentDate);
+    markEmailSentBtn.classList.toggle("sent", Boolean(sentDate));
+    markEmailSentBtn.innerHTML = sentDate
+      ? `${ICONS.check}<span>Gesendet · ${fmtDate(sentDate).slice(0, 6)}</span>`
+      : `${ICONS.check}<span>Als gesendet markieren</span>`;
   }
 
   function latestInterviewDate() {
@@ -1427,29 +2029,59 @@
   }
 
   function emailTemplateContent(templateId) {
-    const company = form.firma.value.trim() || "dem Unternehmen";
-    const role = form.stelle.value.trim() || "der ausgeschriebenen Position";
+    const english = emailLanguage === "en";
+    const company = form.firma.value.trim() || (english ? "your company" : "dem Unternehmen");
+    const role = form.stelle.value.trim() || (english ? "the advertised position" : "der ausgeschriebenen Position");
     const applicationDate = parseDate(form.datum.value) || todayISO();
     const interviewDate = latestInterviewDate();
-    const greeting = form.contactName.value.trim() ? `Hallo ${form.contactName.value.trim()},` : "Guten Tag,";
-    const closing = "Freundliche Grüsse";
+    const contactName = form.contactName.value.trim();
+    const greeting = english ? (contactName ? `Hi ${contactName},` : "Hello,") : (contactName ? `Hallo ${contactName},` : "Guten Tag,");
+    const closing = english ? "Kind regards" : "Freundliche Grüsse";
+    const date = (value) => english
+      ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`))
+      : fmtDate(value);
     const followDays = Number(templateId.replace("follow", ""));
 
     if (followDays) {
+      const elapsedDays = Math.max(0, daysSince(applicationDate));
+      if (english) {
+        const elapsedSentence = elapsedDays === 0
+          ? "I wanted to follow up and ask whether there are any updates on the hiring process."
+          : `As ${elapsedDays} day${elapsedDays === 1 ? " has" : "s have"} passed since my application, I wanted to follow up and ask whether there are any updates on the hiring process.`;
+        return {
+          subject: `Follow-up on my application for ${role}`,
+          body: `${greeting}\n\nI applied for the ${role} position at ${company} on ${date(applicationDate)}. ${elapsedSentence}\n\nI remain very interested in the opportunity and would appreciate any information you can share about the next steps.\n\n${closing}`,
+        };
+      }
+      const elapsedSentence = elapsedDays === 0
+        ? "Ich möchte mich freundlich nach dem aktuellen Stand des Auswahlprozesses erkundigen."
+        : `Da seit meiner Bewerbung inzwischen ${elapsedDays} Tag${elapsedDays === 1 ? " vergangen ist" : "e vergangen sind"}, möchte ich mich freundlich nach dem aktuellen Stand des Auswahlprozesses erkundigen.`;
       return {
         subject: `Nachfrage zu meiner Bewerbung als ${role}`,
-        body: `${greeting}\n\nam ${fmtDate(applicationDate)} habe ich mich bei ${company} als ${role} beworben. Da seit meiner Bewerbung inzwischen ${followDays} Tage vergangen sind, möchte ich mich freundlich nach dem aktuellen Stand des Auswahlprozesses erkundigen.\n\nDie Position interessiert mich weiterhin sehr. Über eine kurze Rückmeldung zum weiteren Vorgehen freue ich mich.\n\n${closing}`,
+        body: `${greeting}\n\nam ${date(applicationDate)} habe ich mich bei ${company} als ${role} beworben. ${elapsedSentence}\n\nDie Position interessiert mich weiterhin sehr. Über eine kurze Rückmeldung zum weiteren Vorgehen freue ich mich.\n\n${closing}`,
       };
     }
     if (templateId === "thanks") {
+      if (english) {
+        return {
+          subject: `Thank you for the interview – ${role}`,
+          body: `${greeting}\n\nThank you for the enjoyable conversation on ${date(interviewDate)} about the ${role} position at ${company}. Our discussion further strengthened my interest in the role and in joining your team.\n\nPlease let me know if I can provide any additional information. I look forward to hearing about the next steps.\n\n${closing}`,
+        };
+      }
       return {
         subject: `Vielen Dank für das Gespräch zur Position ${role}`,
-        body: `${greeting}\n\nvielen Dank für das angenehme Gespräch am ${fmtDate(interviewDate)} zur Position ${role} bei ${company}. Der Austausch hat mein Interesse an der Rolle und an einer Zusammenarbeit nochmals bestärkt.\n\nFalls Sie noch weitere Informationen von mir benötigen, lasse ich Ihnen diese gerne zukommen. Ich freue mich auf die nächsten Schritte.\n\n${closing}`,
+        body: `${greeting}\n\nvielen Dank für das angenehme Gespräch am ${date(interviewDate)} zur Position ${role} bei ${company}. Der Austausch hat mein Interesse an der Rolle und an einer Zusammenarbeit nochmals bestärkt.\n\nFalls Sie noch weitere Informationen von mir benötigen, lasse ich Ihnen diese gerne zukommen. Ich freue mich auf die nächsten Schritte.\n\n${closing}`,
+      };
+    }
+    if (english) {
+      return {
+        subject: `Next steps in the hiring process – ${role}`,
+        body: `${greeting}\n\nThank you again for our conversation on ${date(interviewDate)} regarding the ${role} position at ${company}. I wanted to ask about the next steps in the hiring process and when I might expect an update.\n\nI remain very interested in the position and look forward to hearing from you.\n\n${closing}`,
       };
     }
     return {
       subject: `Nächste Schritte im Bewerbungsprozess – ${role}`,
-      body: `${greeting}\n\nnochmals vielen Dank für den bisherigen Austausch zur Position ${role} bei ${company} am ${fmtDate(interviewDate)}. Ich wollte mich freundlich erkundigen, wie der weitere Bewerbungsprozess aussieht und wann ich ungefähr mit einer Rückmeldung rechnen darf.\n\nMein Interesse an der Position besteht weiterhin, und ich freue mich auf den nächsten Schritt.\n\n${closing}`,
+      body: `${greeting}\n\nnochmals vielen Dank für den bisherigen Austausch zur Position ${role} bei ${company} am ${date(interviewDate)}. Ich wollte mich freundlich erkundigen, wie der weitere Bewerbungsprozess aussieht und wann ich ungefähr mit einer Rückmeldung rechnen darf.\n\nMein Interesse an der Position besteht weiterhin, und ich freue mich auf den nächsten Schritt.\n\n${closing}`,
     };
   }
 
@@ -1461,6 +2093,12 @@
       const active = tab.dataset.emailTemplate === emailTemplateId;
       tab.classList.toggle("active", active);
       tab.setAttribute("aria-selected", String(active));
+      tab.textContent = EMAIL_TEMPLATE_TAB_LABELS[emailLanguage][tab.dataset.emailTemplate];
+    });
+    emailLanguagePicker.querySelectorAll("[data-email-language]").forEach((button) => {
+      const active = button.dataset.emailLanguage === emailLanguage;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
     });
     if (resetText || !emailTextCustomized) {
       const content = emailTemplateContent(emailTemplateId);
@@ -1468,7 +2106,7 @@
       emailBody.value = content.body;
       emailTextCustomized = false;
     }
-    emailComposerHint.textContent = EMAIL_TEMPLATE_LABELS[emailTemplateId];
+    emailComposerHint.textContent = EMAIL_TEMPLATE_LABELS[emailLanguage][emailTemplateId];
   }
 
   async function copyEmailDraft() {
@@ -1491,6 +2129,15 @@
     const mailto = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     window.location.href = mailto;
     if (!recipient) toast("Mailprogramm geöffnet – Empfänger bitte ergänzen");
+  }
+
+  function markFollowUpDone({ sent = false } = {}) {
+    state.draft.followUpDoneAt = todayISO();
+    timelineDateMode = "followup";
+    renderFollowUpControls();
+    renderPhase();
+    renderAiBrief();
+    toast(sent ? "E-Mail als gesendet markiert" : "Nachfrage im Verlauf eingetragen");
   }
 
   function isDirty() {
@@ -1517,19 +2164,56 @@
     const d = state.draft;
     const idx = phaseIdx(d.phase);
     const endColor = d.status === "offen" ? "var(--s-phase)" : STATUS[d.status].color;
+    const hasRejection = d.status === "absage";
+    const followedUpAt = parseDate(d.followUpDoneAt);
+    const eventsAfterPhase = new Map();
+    const addEvent = (afterIndex, event) => eventsAfterPhase.set(afterIndex, [...(eventsAfterPhase.get(afterIndex) || []), event]);
+    if (followedUpAt) {
+      let afterIndex = 0;
+      PHASES.slice(1, idx + 1).forEach((phase, index) => {
+        const phaseDateValue = parseDate(d.phaseDates?.[phase.id]);
+        if (phaseDateValue && phaseDateValue <= followedUpAt) afterIndex = index + 1;
+      });
+      addEvent(afterIndex, { type: "followup", date: followedUpAt });
+    }
+    if (hasRejection) addEvent(idx, { type: "outcome", date: parseDate(form.absageAm.value) });
+    eventsAfterPhase.forEach((events) => events.sort((a, b) => String(a.date).localeCompare(String(b.date))));
+    const steps = [];
     phaseStepper.style.setProperty("--end", endColor);
-    phaseStepper.innerHTML = PHASES.map((p, i) => {
+    PHASES.forEach((p, i) => {
       const date = i === 0 ? form.datum.value : d.phaseDates[p.id];
-      const cls = i < idx ? "done" : i === idx ? "done current" : "";
-      return `
+      const cls = i < idx || (hasRejection && i === idx) ? "done" : i === idx ? "done current" : "";
+      steps.push(`
         <button type="button" class="step ${cls}" data-phase="${p.id}" style="--i:${i}" aria-pressed="${i === idx}">
-          <span class="step-dot">${i < idx || (i === idx && d.status !== "offen") ? (i === idx && d.status === "absage" ? ICONS.x : ICONS.check) : i + 1}</span>
+          <span class="step-dot">${i < idx || (hasRejection && i === idx) ? ICONS.check : i + 1}</span>
           <span class="step-label">${p.label}</span>
           <span class="step-date">${i <= idx && date ? fmtDate(date).slice(0, 6) : ""}</span>
-        </button>`;
-    }).join("");
-    phaseDateWrap.hidden = idx === 0;
-    if (idx > 0) {
+        </button>`);
+      (eventsAfterPhase.get(i) || []).forEach((event) => {
+        if (event.type === "followup") steps.push(`
+          <button type="button" class="step followup-step done" data-followup-step style="--i:${steps.length}" aria-pressed="${timelineDateMode === "followup"}">
+            <span class="step-dot">${ICONS.mail}</span>
+            <span class="step-label">Nachgefragt</span>
+            <span class="step-date">${fmtDate(event.date).slice(0, 6)}</span>
+          </button>`);
+        if (event.type === "outcome") steps.push(`
+          <button type="button" class="step outcome-step done current" data-outcome-step="absage" style="--i:${steps.length}" aria-pressed="${timelineDateMode === "outcome"}">
+            <span class="step-dot">${ICONS.x}</span>
+            <span class="step-label">Absage</span>
+            <span class="step-date">${form.absageAm.value ? fmtDate(form.absageAm.value).slice(0, 6) : ""}</span>
+          </button>`);
+      });
+    });
+    phaseStepper.style.setProperty("--steps", String(steps.length));
+    phaseStepper.innerHTML = steps.join("");
+    phaseDateWrap.hidden = timelineDateMode === "phase" && idx === 0;
+    if (timelineDateMode === "followup" && followedUpAt) {
+      $("#phaseDateLabel").textContent = "Datum „Nachgefragt“";
+      phaseDate.value = followedUpAt;
+    } else if (hasRejection && timelineDateMode === "outcome") {
+      $("#phaseDateLabel").textContent = "Datum „Absage“";
+      phaseDate.value = form.absageAm.value || todayISO();
+    } else if (idx > 0) {
       $("#phaseDateLabel").textContent = `Datum „${PHASE[d.phase].label}“`;
       phaseDate.value = d.phaseDates[d.phase] || "";
     }
@@ -1537,6 +2221,7 @@
 
   function setPhase(id) {
     const d = state.draft;
+    timelineDateMode = "phase";
     d.phase = id;
     const idx = phaseIdx(id);
     // keep dates of reached steps, drop the ones beyond
@@ -1597,6 +2282,7 @@
     if (linkType.value === "absage" && state.draft.status !== "absage") {
       state.draft.status = "absage";
       if (!form.absageAm.value) form.absageAm.value = todayISO();
+      timelineDateMode = "outcome";
       renderStatusPicker(); renderPhase();
     } else if (linkType.value === "einladung" && idx < INTERVIEW_IDX) {
       if (state.draft.status === "keine") { state.draft.status = "offen"; renderStatusPicker(); }
@@ -1627,7 +2313,7 @@
     }
     if (linkUrl.value.trim()) addLink();
     if (noteText.value.trim()) addNote();
-    state.draft.updated = Date.now();
+    state.draft.updated = nextUpdated(state.draft);
     const idx = state.apps.findIndex((a) => a.id === state.draft.id);
     if (idx >= 0) state.apps[idx] = state.draft; else state.apps.unshift(state.draft);
     const name = state.draft.firma, wasNew = state.isNew;
@@ -1654,12 +2340,13 @@
     if (!app) return;
     const idx = state.apps.indexOf(app);
     state.apps.splice(idx, 1);
+    if (app._syncedUpdated) pendingDeletes.set(app.id, Number(app._syncedUpdated));
     persist();
     closeDrawer(true);
     render({ transition: true });
     toast(state.privacy ? "Bewerbung gelöscht" : `${app.firma} gelöscht`, {
       action: "Rückgängig",
-      onAction: () => { state.apps.splice(idx, 0, app); persist(); render({ transition: true }); },
+      onAction: () => { pendingDeletes.delete(app.id); state.apps.splice(idx, 0, app); persist(); render({ transition: true }); },
     });
   }
 
@@ -1733,6 +2420,9 @@
   }
 
   async function saveInboundAlias() {
+    const expectedEpoch = authEpoch;
+    const expectedUserId = currentUser?.id;
+    if (!expectedUserId) return;
     const alias = inboundAliasInput.value.trim().toLowerCase();
     if (!/^[a-z][a-z0-9-]{2,31}$/.test(alias)) {
       inboundAliasInput.setAttribute("aria-invalid", "true");
@@ -1741,10 +2431,11 @@
     }
     saveInboundAliasBtn.disabled = true;
     const { data, error } = await db.functions.invoke("inbound-settings", { body: { alias } });
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
     saveInboundAliasBtn.disabled = false;
     if (error || !data?.ok) {
       inboundAliasInput.setAttribute("aria-invalid", "true");
-      toast(data?.error === "alias_taken" ? "Diese Adresse ist bereits vergeben" : data?.message || "Adresse konnte nicht geändert werden");
+      toast(data?.message || "Dieser Alias konnte nicht gespeichert werden");
       return;
     }
     inboundSettings = data.data;
@@ -1802,28 +2493,37 @@
     }).join("");
   }
 
-  async function loadInboundSettings() {
+  async function loadInboundSettings(expectedEpoch, expectedUserId) {
     const { data, error } = await db.functions.invoke("inbound-settings", { body: {} });
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
     if (error || !data?.ok) throw error || new Error(data?.message || "Einstellungen konnten nicht geladen werden.");
     inboundSettings = data.data;
     renderInboundSettings();
   }
 
-  async function loadInboundSuggestions({ quiet = false } = {}) {
-    if (!currentUser) return;
+  async function loadInboundSuggestions({ quiet = false, expectedEpoch, expectedUserId } = {}) {
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
     if (!quiet) renderInboundSuggestions({ loading: true });
     const { data, error } = await db.from("automation_suggestions")
       .select("id, application_id, suggestion_type, payload, confidence, created_at")
       .eq("source", "email").eq("status", "pending").order("created_at", { ascending: false });
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
     if (error) throw error;
     inboundSuggestions = data || [];
     renderInboundSuggestions();
   }
 
   async function refreshInbound({ quiet = false } = {}) {
+    if (!currentUser) return;
+    const expectedEpoch = authEpoch;
+    const expectedUserId = currentUser.id;
     try {
-      await Promise.all([loadInboundSettings(), loadInboundSuggestions({ quiet })]);
+      await Promise.all([
+        loadInboundSettings(expectedEpoch, expectedUserId),
+        loadInboundSuggestions({ quiet, expectedEpoch, expectedUserId }),
+      ]);
     } catch (error) {
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
       renderInboundSettings("E-Mail-Assistent gerade nicht verfügbar");
       if (!quiet) renderInboundSuggestions({ error: "Bitte zuerst Datenbank, Edge Functions und Resend konfigurieren." });
     }
@@ -1853,9 +2553,13 @@
 
   async function toggleInbound() {
     if (!inboundSettings?.configured) return;
+    const expectedEpoch = authEpoch;
+    const expectedUserId = currentUser?.id;
+    if (!expectedUserId) return;
     toggleInboundBtn.disabled = true;
     const next = !inboundSettings.enabled;
     const { data, error } = await db.functions.invoke("inbound-settings", { body: { enabled: next } });
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
     if (error || !data?.ok) {
       toggleInboundBtn.disabled = false;
       toast("Aktivierung konnte nicht geändert werden");
@@ -1867,6 +2571,9 @@
   }
 
   async function reviewInboundSuggestion(card, accepted) {
+    const expectedEpoch = authEpoch;
+    const expectedUserId = currentUser?.id;
+    if (!expectedUserId) return;
     const suggestion = inboundSuggestions.find((item) => item.id === card.dataset.suggestionId);
     if (!suggestion) return;
     const buttons = card.querySelectorAll("button");
@@ -1876,21 +2583,33 @@
         const applicationId = card.querySelector("[data-inbound-application]").value;
         const app = state.apps.find((item) => item.id === applicationId);
         if (!app) throw new Error("Bitte wähle zuerst die passende Bewerbung aus.");
+        const expectedUpdated = Number(app._syncedUpdated) || 0;
+        if (!expectedUpdated) throw new Error("optimistic_conflict");
+        const candidate = structuredClone(app);
         const payload = suggestion.payload || {};
-        if (STATUS[payload.suggestedStatus] && payload.suggestedStatus !== "unchanged") app.status = payload.suggestedStatus;
-        if (PHASE[payload.suggestedPhase] && payload.suggestedPhase !== "unchanged") app.phase = payload.suggestedPhase;
+        if (STATUS[payload.suggestedStatus] && payload.suggestedStatus !== "unchanged") candidate.status = payload.suggestedStatus;
+        if (PHASE[payload.suggestedPhase] && payload.suggestedPhase !== "unchanged") candidate.phase = payload.suggestedPhase;
         const eventDate = parseDate(payload.eventDate);
-        if (eventDate && PHASE[payload.suggestedPhase] && payload.suggestedPhase !== "beworben") app.phaseDates[payload.suggestedPhase] = eventDate;
-        if (eventDate && ["absage", "angebot"].includes(payload.suggestedStatus)) app.absageAm = eventDate;
-        if (eventDate && payload.eventType === "confirmation" && !app.datum) app.datum = eventDate;
-        if (payload.contactName) app.contactName = String(payload.contactName);
-        if (payload.contactEmail) app.contactEmail = String(payload.contactEmail);
+        if (eventDate && PHASE[payload.suggestedPhase] && payload.suggestedPhase !== "beworben") candidate.phaseDates[payload.suggestedPhase] = eventDate;
+        if (eventDate && ["absage", "angebot"].includes(payload.suggestedStatus)) candidate.absageAm = eventDate;
+        if (eventDate && payload.eventType === "confirmation" && !candidate.datum) candidate.datum = eventDate;
+        if (payload.contactName) candidate.contactName = String(payload.contactName);
+        if (payload.contactEmail) candidate.contactEmail = String(payload.contactEmail);
         const summary = String(payload.summary || "").trim();
-        if (summary && !app.notes.some((note) => note.text === summary)) app.notes.unshift({ id: uid(), text: summary, date: eventDate || todayISO() });
-        app.sourceMetadata = { ...(app.sourceMetadata || {}), lastInboundSuggestionId: suggestion.id };
-        app.updated = Date.now();
-        const { error: applicationError } = await db.from("applications").upsert(toRow(app), { onConflict: "id" });
+        if (summary && !candidate.notes.some((note) => note.text === summary)) candidate.notes.unshift({ id: uid(), text: summary, date: eventDate || todayISO() });
+        candidate.sourceMetadata = { ...(candidate.sourceMetadata || {}), lastInboundSuggestionId: suggestion.id };
+        candidate.updated = nextUpdated(candidate);
+        const { data: updatedApplication, error: applicationError } = await db.from("applications")
+          .update(toRow(candidate, expectedUserId))
+          .eq("user_id", expectedUserId)
+          .eq("id", app.id)
+          .eq("updated_at", expectedUpdated)
+          .select("updated_at")
+          .maybeSingle();
+        if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
         if (applicationError) throw applicationError;
+        if (!updatedApplication) throw new Error("optimistic_conflict");
+        Object.assign(app, candidate, { _syncedUpdated: Number(updatedApplication.updated_at) });
         suggestion.application_id = app.id;
       }
       const applicationId = accepted ? card.querySelector("[data-inbound-application]").value : suggestion.application_id;
@@ -1899,6 +2618,7 @@
         application_id: applicationId || null,
         reviewed_at: new Date().toISOString(),
       }).eq("id", suggestion.id);
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
       if (error) throw error;
       inboundSuggestions = inboundSuggestions.filter((item) => item.id !== suggestion.id);
       persist();
@@ -1906,8 +2626,10 @@
       renderInboundSuggestions();
       toast(accepted ? "Änderung übernommen" : "Vorschlag verworfen");
     } catch (error) {
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
       toast(error?.message === "Bitte wähle zuerst die passende Bewerbung aus."
         ? error.message
+        : error?.message === "optimistic_conflict" ? "Die Bewerbung wurde in einem anderen Tab geändert. Bitte neu laden."
         : "Vorschlag konnte nicht verarbeitet werden");
       buttons.forEach((button) => (button.disabled = false));
     }
@@ -1933,6 +2655,7 @@
   }
 
   function closeImportDialog() {
+    pendingImport = null;
     if (!importDialog.classList.contains("open")) return;
     importDialog.classList.remove("open");
     importOverlay.classList.remove("show");
@@ -1965,12 +2688,16 @@
 
   async function inspectImportFile(file) {
     if (!file) return;
+    const expectedEpoch = authEpoch;
+    const expectedUserId = currentUser?.id;
+    if (!expectedUserId) return;
     if (file.size > 5 * 1024 * 1024) {
       showImportResult({ file, errors: ["Die Datei ist grösser als 5 MB."], fatal: true });
       return;
     }
     try {
       const text = await file.text();
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
       const lower = file.name.toLowerCase();
       const isJSON = lower.endsWith(".json") || (!lower.endsWith(".csv") && text.trim().startsWith("["));
       if (!isJSON && !lower.endsWith(".csv")) {
@@ -1993,6 +2720,7 @@
         showImportResult({ file, type: "csv", ...result });
       }
     } catch (e) {
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
       showImportResult({ file, errors: [e.message || "Die Datei konnte nicht gelesen werden."], fatal: true });
     }
   }
@@ -2001,7 +2729,17 @@
     if (!pendingImport) return;
     if (pendingImport.type === "json") {
       if (state.apps.length && !confirm(`Backup mit ${pendingImport.apps.length} Einträgen wiederherstellen? Die aktuellen Daten werden ersetzt.`)) return;
-      state.apps = pendingImport.apps;
+      const current = new Map(state.apps.map((app) => [app.id, app]));
+      const restoredIds = new Set(pendingImport.apps.map((app) => app.id));
+      state.apps.forEach((app) => {
+        if (!restoredIds.has(app.id) && app._syncedUpdated) pendingDeletes.set(app.id, Number(app._syncedUpdated));
+      });
+      state.apps = pendingImport.apps.map((app) => {
+        const existing = current.get(app.id);
+        app._syncedUpdated = Number(existing?._syncedUpdated) || 0;
+        app.updated = Date.now();
+        return app;
+      });
       persist(); render({ transition: true }); closeImportDialog();
       toast(`${state.apps.length} Bewerbungen aus Backup geladen`);
       return;
@@ -2050,12 +2788,176 @@
       nextAction: String(a.nextAction || ""),
       sourceMetadata: a.sourceMetadata && typeof a.sourceMetadata === "object" ? a.sourceMetadata : {},
       updated: a.updated || Date.now(),
+      _syncedUpdated: Number(a._syncedUpdated) || 0,
     };
   }
 
-  /* ---------- Menu ---------- */
-  const menu = $("#menu"), menuBtn = $("#menuBtn");
-  const closeMenu = () => menu.classList.remove("open");
+  /* ---------- Settings center ---------- */
+  const settingsPanel = $("#settingsPanel"), settingsOverlay = $("#settingsOverlay");
+  const deleteAccountConfirm = $("#deleteAccountConfirm"), deleteAccountInput = $("#deleteAccountInput");
+  let settingsOpen = false;
+
+  function updateNavIdentity(profile = null) {
+    $("#userEmail").textContent = state.privacy ? "Konto geschützt" : (currentUser?.email || "Angemeldet");
+  }
+
+  async function openSettings() {
+    if (!currentUser?.id || settingsOpen) return;
+    settingsOpen = true;
+    settingsOverlay.hidden = false;
+    requestAnimationFrame(() => settingsOverlay.classList.add("show"));
+    settingsPanel.classList.add("open");
+    settingsPanel.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    deleteAccountConfirm.hidden = true;
+    deleteAccountInput.value = "";
+    $("#confirmDeleteAccountBtn").disabled = true;
+    $("#deleteAccountMessage").textContent = "";
+    $("#settingsAccountMessage").textContent = "Profil wird geladen…";
+    $("#settingsEmail").value = currentUser.email || "";
+    updateNavIdentity();
+    try {
+      const expectedUserId = currentUser.id;
+      const { data, error } = await db.from("user_profiles")
+        .select("display_name,target_role,employment_status,monthly_application_goal,ai_completed_tasks,cv_path,cv_name,cv_uploaded_at")
+        .eq("user_id", expectedUserId).maybeSingle();
+      if (error) throw error;
+      if (!settingsOpen || currentUser?.id !== expectedUserId) return;
+      $("#settingsName").value = data?.display_name || "";
+      $("#settingsRole").value = data?.target_role || "";
+      $("#settingsEmployment").value = data?.employment_status || "";
+      $("#settingsGoal").value = data?.monthly_application_goal || 10;
+      $("#settingsCvStatus").textContent = data?.cv_name ? `${data.cv_name} · privat gespeichert` : "Noch kein Lebenslauf hinterlegt";
+      $("#settingsAccountMessage").textContent = "";
+      userProfile = data || null;
+      updateNavIdentity(data);
+    } catch {
+      $("#settingsAccountMessage").textContent = "Profildaten konnten nicht geladen werden.";
+    }
+  }
+
+  function closeSettings() {
+    if (!settingsOpen) return;
+    settingsOpen = false;
+    settingsPanel.classList.remove("open");
+    settingsPanel.setAttribute("aria-hidden", "true");
+    settingsOverlay.classList.remove("show");
+    setTimeout(() => { if (!settingsOpen) settingsOverlay.hidden = true; }, 250);
+    document.body.style.overflow = drawer.classList.contains("open") ? "hidden" : "";
+    deleteAccountInput.value = "";
+  }
+
+  async function saveAccountSettings(event) {
+    event.preventDefault();
+    if (!currentUser?.id) return;
+    const button = $("#saveAccountSettingsBtn");
+    const message = $("#settingsAccountMessage");
+    const expectedUserId = currentUser.id;
+    const nextEmail = $("#settingsEmail").value.trim().toLowerCase();
+    const goal = Math.max(1, Math.min(50, Number($("#settingsGoal").value) || 10));
+    button.disabled = true;
+    message.textContent = "Wird gespeichert…";
+    try {
+      const profile = {
+        user_id: expectedUserId,
+        display_name: $("#settingsName").value.trim().slice(0, 80) || null,
+        target_role: $("#settingsRole").value.trim().slice(0, 120) || null,
+        employment_status: $("#settingsEmployment").value || null,
+        monthly_application_goal: goal,
+        onboarding_completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      const { error: profileError } = await db.from("user_profiles").upsert(profile, { onConflict: "user_id" });
+      if (profileError) throw profileError;
+      let emailNotice = "";
+      if (nextEmail && nextEmail !== String(currentUser.email || "").toLowerCase()) {
+        const { data, error } = await db.auth.updateUser({ email: nextEmail });
+        if (error) throw error;
+        if (data?.user) currentUser = data.user;
+        emailNotice = " Bestätige die neue E-Mail-Adresse über den zugesandten Link.";
+      }
+      if (currentUser?.id !== expectedUserId) return;
+      userProfile = { ...(userProfile || {}), ...profile };
+      updateNavIdentity(profile);
+      renderAiBrief();
+      message.textContent = `Gespeichert.${emailNotice}`;
+      toast("Account aktualisiert");
+    } catch (error) {
+      message.textContent = error?.message || "Änderungen konnten nicht gespeichert werden.";
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function uploadCv(file, { onboarding = false } = {}) {
+    if (!currentUser?.id || !file) return false;
+    const allowed = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
+    if (!allowed.includes(file.type) || !/\.(pdf|docx)$/i.test(file.name)) {
+      toast("Bitte verwende eine PDF- oder DOCX-Datei"); return false;
+    }
+    if (file.size > 10 * 1024 * 1024) { toast("Der Lebenslauf darf maximal 10 MB gross sein"); return false; }
+    const expectedUserId = currentUser.id;
+    const extension = file.name.toLowerCase().endsWith(".docx") ? "docx" : "pdf";
+    const path = `${expectedUserId}/cv/${crypto.randomUUID()}.${extension}`;
+    const oldPath = userProfile?.cv_path || "";
+    if (onboarding) $("#onboardingMessage").textContent = "Lebenslauf wird sicher gespeichert…";
+    else $("#settingsCvStatus").textContent = "Lebenslauf wird hochgeladen…";
+    const { error: uploadError } = await db.storage.from("private-cvs").upload(path, file, { contentType: file.type, upsert: false, cacheControl: "0" });
+    if (uploadError) { toast("Lebenslauf konnte nicht hochgeladen werden"); return false; }
+    const cvProfile = { user_id: expectedUserId, cv_path: path, cv_name: file.name.slice(0,180), cv_uploaded_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    const { error: profileError } = await db.from("user_profiles").upsert(cvProfile, { onConflict: "user_id" });
+    if (profileError || currentUser?.id !== expectedUserId) {
+      await db.storage.from("private-cvs").remove([path]);
+      toast("CV-Zuordnung konnte nicht gespeichert werden"); return false;
+    }
+    userProfile = { ...(userProfile || {}), ...cvProfile };
+    if (oldPath && oldPath !== path) await db.storage.from("private-cvs").remove([oldPath]);
+    $("#settingsCvStatus").textContent = `${file.name} · privat gespeichert`;
+    $("#onboardingCvLabel").textContent = file.name;
+    toast("Lebenslauf sicher gespeichert");
+    return true;
+  }
+
+  async function deleteOwnAccount() {
+    if (!currentUser?.id || deleteAccountInput.value.trim() !== "LÖSCHEN") return;
+    const button = $("#confirmDeleteAccountBtn"), message = $("#deleteAccountMessage");
+    button.disabled = true;
+    message.textContent = "Account wird sicher gelöscht…";
+    try {
+      const { data, error } = await db.functions.invoke("delete-account", { body: { action: "delete-account", confirmation: "LÖSCHEN" } });
+      if (error || !data?.ok) throw error || new Error(data?.message || "Löschen fehlgeschlagen");
+      closeSettings();
+      await db.auth.signOut({ scope: "local" }).catch(() => {});
+      await stopApp();
+      authStatus("Dein Account und alle zugehörigen Daten wurden gelöscht.", true);
+    } catch {
+      message.textContent = "Der Account konnte nicht gelöscht werden. Bitte versuche es erneut.";
+      button.disabled = false;
+    }
+  }
+
+  async function deleteAllUserData() {
+    if (!currentUser?.id || !confirm("Wirklich ALLE Daten löschen? Bewerbungen, E-Mail-Automationen und Profildaten werden unwiderruflich entfernt. Dein Login bleibt bestehen.")) return;
+    const button = $("#deleteAllDataBtn");
+    button.disabled = true;
+    try {
+      const { data, error } = await db.functions.invoke("delete-account", { body: { action: "delete-data", confirmation: "ALLE DATEN LÖSCHEN" } });
+      if (error || !data?.ok) throw error || new Error("Löschen fehlgeschlagen");
+      state.apps = [];
+      state.interviews = [];
+      inboundSettings = null;
+      inboundSuggestions = [];
+      pendingDeletes.clear();
+      closeSettings();
+      render({ transition: true });
+      updateInboundBadge();
+      toast("Alle Daten wurden gelöscht");
+    } catch {
+      toast("Die Daten konnten nicht gelöscht werden");
+    } finally {
+      button.disabled = false;
+    }
+  }
 
   function applyPrivacyMode({ announce = false } = {}) {
     document.body.classList.toggle("privacy-mode", state.privacy);
@@ -2064,7 +2966,7 @@
     button.setAttribute("aria-pressed", String(state.privacy));
     button.setAttribute("aria-label", state.privacy ? "Privacy-Modus deaktivieren" : "Privacy-Modus aktivieren");
     button.title = state.privacy ? "Normale Ansicht wiederherstellen" : "Sichere Ansicht für Screenshots";
-    if (currentUser) $("#userEmail").textContent = state.privacy ? "Konto geschützt" : (currentUser.email || "Angemeldet");
+    if (currentUser) updateNavIdentity();
     if (state.privacy && els.search.value) {
       els.search.value = "";
       state.query = "";
@@ -2081,12 +2983,10 @@
   function togglePrivacyMode() {
     state.privacy = !state.privacy;
     try { localStorage.setItem(PRIVACY_KEY, state.privacy ? "1" : "0"); } catch {}
-    closeMenu();
     applyPrivacyMode({ announce: true });
   }
 
   function handleAction(action) {
-    closeMenu();
     const stamp = todayISO();
     switch (action) {
       case "add": openDrawer(null); break;
@@ -2094,11 +2994,14 @@
         download(`bewerbungen-${stamp}.csv`, appsToCSV(state.apps), "text/csv;charset=utf-8");
         toast("CSV exportiert"); break;
       case "export-json":
-        download(`bewerbungen-backup-${stamp}.json`, JSON.stringify(state.apps, null, 2), "application/json");
+        download(`bewerbungen-backup-${stamp}.json`, JSON.stringify(state.apps, (key, value) => key === "_syncedUpdated" ? undefined : value, 2), "application/json");
         toast("Backup gespeichert"); break;
       case "import": openImportDialog(); break;
       case "reset":
         if (confirm("Wirklich ALLE Bewerbungen löschen? Tipp: vorher ein Backup speichern.")) {
+          state.apps.forEach((app) => {
+            if (app._syncedUpdated) pendingDeletes.set(app.id, Number(app._syncedUpdated));
+          });
           state.apps = []; persist(); render({ transition: true }); toast("Alle Daten gelöscht");
         }
         break;
@@ -2109,16 +3012,87 @@
   }
 
   /* ---------- Events ---------- */
-  $("#addBtn").addEventListener("click", () => openDrawer(null));
+  $("#addBtn").addEventListener("click", () => state.view === "interviews" ? openInterviewDialog() : openDrawer(null));
+  $("#workspaceSwitch").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-workspace-view]");
+    if (button) setView(button.dataset.workspaceView);
+  });
+  $("#interviewList").addEventListener("click", (event) => {
+    if (event.target.closest("[data-interview-add]")) return openInterviewDialog();
+    const card = event.target.closest("[data-interview-id]");
+    if (!card) return;
+    const interview = state.interviews.find((item) => item.id === card.dataset.interviewId);
+    if (!interview) return;
+    if (event.target.closest("[data-interview-delete]")) return void deleteInterview(interview);
+    if (event.target.closest("[data-interview-regenerate]")) return void createInterviewPrep(interview);
+    if (event.target.closest("[data-interview-prep]")) {
+      if (interview.ai_prep) { interview._expanded = !interview._expanded; renderInterviews(); }
+      else void createInterviewPrep(interview);
+    }
+  });
+  interviewForm.addEventListener("submit", saveInterview);
+  interviewOverlay.addEventListener("click", closeInterviewDialog);
+  $("#interviewCloseBtn").addEventListener("click", closeInterviewDialog);
+  $("#interviewCancelBtn").addEventListener("click", closeInterviewDialog);
+  $("#interviewCvUploadBtn").addEventListener("click", () => $("#quickCvInput").click());
+  $("#settingsCvBtn").addEventListener("click", () => $("#quickCvInput").click());
+  $("#quickCvInput").addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (file && await uploadCv(file)) $("#interviewCvNudge").hidden = true;
+    event.target.value = "";
+  });
   $("#magicImportBtn").addEventListener("click", () => openDrawer(null, { focusMagic: true }));
   $("#inboundBtn").addEventListener("click", openInboundDialog);
   $("#privacyBtn").addEventListener("click", togglePrivacyMode);
-  $("#importBtn").addEventListener("click", openImportDialog);
-  menuBtn.addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("open"); });
-  document.addEventListener("click", (e) => {
-    if (!menu.contains(e.target)) closeMenu();
-    const actionEl = e.target.closest("[data-action]");
-    if (actionEl) handleAction(actionEl.dataset.action);
+  $("#settingsBtn").addEventListener("click", openSettings);
+  $("#settingsCloseBtn").addEventListener("click", closeSettings);
+  settingsOverlay.addEventListener("click", closeSettings);
+  $("#accountSettingsForm").addEventListener("submit", saveAccountSettings);
+  $("#settingsBackupBtn").addEventListener("click", () => handleAction("export-json"));
+  $("#settingsCsvBtn").addEventListener("click", () => handleAction("export-csv"));
+  $("#settingsImportBtn").addEventListener("click", () => { closeSettings(); openImportDialog(); });
+  $("#openPremiumStatsBtn").addEventListener("click", () => { closeSettings(); setView("insights"); });
+  $("#settingsSignoutBtn").addEventListener("click", () => { closeSettings(); db.auth.signOut(); });
+  $("#deleteAllDataBtn").addEventListener("click", deleteAllUserData);
+  $("#revealDeleteAccountBtn").addEventListener("click", () => {
+    deleteAccountConfirm.hidden = !deleteAccountConfirm.hidden;
+    if (!deleteAccountConfirm.hidden) deleteAccountInput.focus();
+  });
+  deleteAccountInput.addEventListener("input", () => {
+    $("#confirmDeleteAccountBtn").disabled = deleteAccountInput.value.trim() !== "LÖSCHEN";
+    $("#deleteAccountMessage").textContent = "";
+  });
+  $("#confirmDeleteAccountBtn").addEventListener("click", deleteOwnAccount);
+  $("#aiBrief").addEventListener("click", (event) => {
+    const dot = event.target.closest("[data-ai-slide]");
+    if (dot) return showAiBriefSlide(Number(dot.dataset.aiSlide));
+    const check = event.target.closest("[data-ai-complete]");
+    if (check) return completeAiTask(check.dataset.aiComplete, check.closest(".ai-brief-item"));
+    const button = event.target.closest("[data-ai-action]");
+    if (!button) return;
+    const action = button.dataset.aiAction;
+    const application = button.dataset.aiAppId && state.apps.find((app) => app.id === button.dataset.aiAppId);
+    if (action === "add") return openDrawer(null);
+    if (action === "magic") return openDrawer(null, { focusMagic: true });
+    if (action === "stats") return setView("insights");
+    if (action === "settings") return openSettings();
+    if (application) {
+      openDrawer(application);
+      if (action === "followup") {
+        setFollowupExpanded(true);
+        requestAnimationFrame(() => $(".followup-block")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      }
+    }
+  });
+  $("#aiBrief").addEventListener("pointerenter", stopAiBriefCarousel);
+  $("#aiBrief").addEventListener("pointerleave", scheduleAiBriefCarousel);
+  $("#aiBrief").addEventListener("focusin", stopAiBriefCarousel);
+  $("#aiBrief").addEventListener("focusout", (event) => {
+    if (!event.currentTarget.contains(event.relatedTarget)) scheduleAiBriefCarousel();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopAiBriefCarousel();
+    else scheduleAiBriefCarousel();
   });
 
   inboundOverlay.addEventListener("click", closeInboundDialog);
@@ -2181,6 +3155,15 @@
     searchTimer = setTimeout(() => { state.query = els.search.value; renderList(); }, 120);
   });
   els.sort.addEventListener("change", () => { state.sort = els.sort.value; render({ transition: true }); });
+  $("#layoutSwitch").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-layout]");
+    if (!button || button.dataset.layout === state.monthLayout) return;
+    state.monthLayout = button.dataset.layout === "list" ? "list" : "tiles";
+    try { localStorage.setItem(MONTH_LAYOUT_KEY, state.monthLayout); } catch {}
+    const update = () => renderList();
+    if (document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) document.startViewTransition(update);
+    else update();
+  });
 
   els.list.addEventListener("click", (e) => {
     const monthShare = e.target.closest("[data-share-month]");
@@ -2189,29 +3172,25 @@
     if (monthExport) return exportMonth(monthExport.dataset.exportMonth);
     const head = e.target.closest(".month-head");
     if (head) return toggleMonth(head.closest(".month"));
-    if (e.target.closest("[data-toggle-all]")) {
-      const months = [...els.list.querySelectorAll(".month")];
-      const openAll = !months.every((m) => m.classList.contains("open"));
-      months.forEach((m) => (openAll ? state.openMonths.add(m.dataset.month) : state.openMonths.delete(m.dataset.month)));
-      saveOpenMonths();
-      return render({ transition: true });
-    }
     const card = e.target.closest(".card");
     if (!card) return;
     const app = state.apps.find((a) => a.id === card.dataset.id);
     if (app) openDrawer(app);
   });
 
-  $("#tabs").addEventListener("click", (e) => {
-    const tab = e.target.closest("[data-view]");
-    if (tab && tab.dataset.view !== state.view) setView(tab.dataset.view);
+  $("#homeBtn").addEventListener("click", () => {
+    if (state.view !== "list") setView("list");
+    window.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   });
-  $("#tabs").addEventListener("keydown", (e) => {
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    const next = state.view === "list" ? "insights" : "list";
-    setView(next);
-    $(`#tabs [data-view="${next}"]`).focus();
-  });
+  const appNavbar = $("#appNavbar");
+  let navbarCompact = false;
+  const updateNavbarShape = () => {
+    if (!navbarCompact && window.scrollY > 90) navbarCompact = true;
+    else if (navbarCompact && window.scrollY < 24) navbarCompact = false;
+    appNavbar.classList.toggle("scrolled", navbarCompact);
+  };
+  window.addEventListener("scroll", updateNavbarShape, { passive: true });
+  updateNavbarShape();
 
   const insightsEl = $("#viewInsights"), tip = $("#tip");
   insightsEl.addEventListener("click", (e) => {
@@ -2240,7 +3219,22 @@
     if (st) {
       state.draft.status = st.dataset.status;
       if (["absage", "angebot"].includes(st.dataset.status) && !form.absageAm.value) form.absageAm.value = todayISO();
+      timelineDateMode = st.dataset.status === "absage" ? "outcome" : "phase";
       renderStatusPicker(); renderPhase();
+      return;
+    }
+    const outcome = e.target.closest("[data-outcome-step]");
+    if (outcome) {
+      timelineDateMode = "outcome";
+      renderPhase();
+      phaseDate.focus();
+      return;
+    }
+    const followup = e.target.closest("[data-followup-step]");
+    if (followup) {
+      timelineDateMode = "followup";
+      renderPhase();
+      phaseDate.focus();
       return;
     }
     const ph = e.target.closest("[data-phase]");
@@ -2257,10 +3251,22 @@
     }
   });
   phaseDate.addEventListener("change", () => {
-    if (phaseDate.value) state.draft.phaseDates[state.draft.phase] = phaseDate.value;
+    if (timelineDateMode === "followup" && state.draft.followUpDoneAt) {
+      state.draft.followUpDoneAt = phaseDate.value;
+      if (!phaseDate.value) timelineDateMode = "phase";
+      renderFollowUpControls();
+      renderAiBrief();
+    } else if (timelineDateMode === "outcome" && state.draft.status === "absage") {
+      form.absageAm.value = phaseDate.value;
+      state.draft.absageAm = phaseDate.value;
+    } else if (phaseDate.value) state.draft.phaseDates[state.draft.phase] = phaseDate.value;
     else delete state.draft.phaseDates[state.draft.phase];
     renderPhase();
     renderEmailComposer(!emailTextCustomized);
+  });
+  form.absageAm.addEventListener("change", () => {
+    state.draft.absageAm = form.absageAm.value;
+    renderPhase();
   });
   form.datum.addEventListener("change", () => { renderPhase(); renderEmailComposer(!emailTextCustomized); });
   form.firma.addEventListener("input", () => { renderDrawerHead(); renderEmailComposer(!emailTextCustomized); });
@@ -2274,10 +3280,18 @@
     emailTextCustomized = false;
     renderEmailComposer(true);
   });
+  emailLanguagePicker.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-email-language]");
+    if (!button || button.dataset.emailLanguage === emailLanguage) return;
+    emailLanguage = button.dataset.emailLanguage;
+    emailTextCustomized = false;
+    renderEmailComposer(true);
+  });
   emailSubject.addEventListener("input", () => { emailTextCustomized = true; });
   emailBody.addEventListener("input", () => { emailTextCustomized = true; });
   $("#copyEmailBtn").addEventListener("click", copyEmailDraft);
   $("#openEmailBtn").addEventListener("click", openEmailDraft);
+  markEmailSentBtn.addEventListener("click", () => markFollowUpDone({ sent: true }));
   runMagicImportBtn.addEventListener("click", runMagicImport);
   jobImportUrl.addEventListener("keydown", (event) => {
     if (event.key === "Enter") { event.preventDefault(); runMagicImport(); }
@@ -2298,23 +3312,42 @@
     }
   });
   form.nextAction.addEventListener("input", () => {
-    if (state.draft.followUpDoneAt) state.draft.followUpDoneAt = "";
+    if (state.draft.followUpDoneAt) {
+      state.draft.followUpDoneAt = "";
+      timelineDateMode = "phase";
+      renderPhase();
+      renderAiBrief();
+    }
     renderFollowUpControls();
   });
   form.followUpAt.addEventListener("change", () => {
     state.draft.followUpDoneAt = "";
+    timelineDateMode = "phase";
     renderFollowUpControls();
+    renderPhase();
+    renderAiBrief();
   });
   snoozeFollowUpBtn.addEventListener("click", () => {
     form.followUpAt.value = addDaysISO(todayISO(), 7);
     state.draft.followUpDoneAt = "";
+    timelineDateMode = "phase";
     renderFollowUpControls();
+    renderPhase();
+    renderAiBrief();
     toast("Nachfassen auf in 7 Tagen gesetzt");
   });
   completeFollowUpBtn.addEventListener("click", () => {
-    state.draft.followUpDoneAt = state.draft.followUpDoneAt ? "" : new Date().toISOString();
-    renderFollowUpControls();
+    if (state.draft.followUpDoneAt) {
+      state.draft.followUpDoneAt = "";
+      timelineDateMode = "phase";
+      renderFollowUpControls();
+      renderPhase();
+      renderAiBrief();
+      return;
+    }
+    markFollowUpDone();
   });
+  followupToggle.addEventListener("click", () => setFollowupExpanded(!followupBlock.classList.contains("expanded")));
   $("#addLinkBtn").addEventListener("click", addLink);
   linkUrl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addLink(); } });
   $("#addNoteBtn").addEventListener("click", addNote);
@@ -2326,10 +3359,11 @@
 
   document.addEventListener("keydown", (e) => {
     const open = drawer.classList.contains("open");
+    const interviewOpen = interviewDialog.classList.contains("open");
     const importOpen = importDialog.classList.contains("open");
     const shareOpen = sharePreview.classList.contains("open");
     const inboundOpen = inboundDialog.classList.contains("open");
-    if (e.key === "Escape") { if (inboundOpen) closeInboundDialog(); else if (shareOpen) closeSharePreview(); else if (importOpen) closeImportDialog(); else if (open) closeDrawer(); else closeMenu(); return; }
+    if (e.key === "Escape") { if (interviewOpen) closeInterviewDialog(); else if (settingsOpen) closeSettings(); else if (inboundOpen) closeInboundDialog(); else if (shareOpen) closeSharePreview(); else if (importOpen) closeImportDialog(); else if (open) closeDrawer(); return; }
     if (importOpen || inboundOpen) return;
     if (open && e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveDraft(); return; }
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
@@ -2344,7 +3378,15 @@
 
   /* ---------- Anmeldung & Boot ---------- */
   const authShell = $("#authShell"), mainApp = $("#mainApp"), authForm = $("#authForm");
-  const authMessage = $("#authMessage"), signupBtn = $("#signupBtn");
+  const authMessage = $("#authMessage"), authSubmit = $("#authSubmit");
+  const loginTab = $("#loginTab"), signupTab = $("#signupTab"), googleAuthBtn = $("#googleAuthBtn");
+  const authPassword = $("#authPassword"), authPasswordToggle = $("#authPasswordToggle");
+  const onboardingShell = $("#onboardingShell"), onboardingForm = $("#onboardingForm");
+  const onboardingBack = $("#onboardingBack"), onboardingNext = $("#onboardingNext");
+  const onboardingSkip = $("#onboardingSkip"), onboardingGoal = $("#onboardingGoal");
+  let authMode = "login";
+  let onboardingStep = 0;
+  let employmentStatus = null;
   let appStarted = false;
 
   function authStatus(message, ok = false) {
@@ -2361,31 +3403,140 @@
     return "Anmeldung fehlgeschlagen. Bitte versuche es erneut.";
   }
 
-  async function loadCloudData() {
-    setSyncState("syncing", "Lädt…");
-    const { data, error } = await db.from("applications").select("*").order("datum", { ascending: false, nullsFirst: false });
-    if (error) throw error;
-    state.apps = (data || []).map(fromRow);
-    setSyncState("", "Gespeichert");
+  function setAuthBusy(busy) {
+    authSubmit.disabled = busy;
+    googleAuthBtn.disabled = busy;
+    loginTab.disabled = busy;
+    signupTab.disabled = busy;
   }
 
-  async function startApp(session) {
-    if (appStarted) return;
-    appStarted = true;
-    currentUser = session.user;
-    $("#userEmail").textContent = state.privacy ? "Konto geschützt" : (currentUser.email || "Angemeldet");
-    authShell.hidden = true;
-    mainApp.hidden = false;
-    try {
-      await loadCloudData();
-    } catch (error) {
-      state.apps = [];
-      setSyncState("error", "Einrichtung nötig");
-      setTimeout(() => toast(error.code === "42P01" ? "Bitte zuerst das Supabase SQL-Skript ausführen" : "Cloud-Daten konnten nicht geladen werden"), 500);
+  function resetPasswordVisibility() {
+    authPassword.type = "password";
+    authPasswordToggle.classList.remove("showing");
+    authPasswordToggle.setAttribute("aria-label", "Passwort anzeigen");
+  }
+
+  function setAuthMode(mode) {
+    authMode = mode === "signup" ? "signup" : "login";
+    const signup = authMode === "signup";
+    loginTab.classList.toggle("active", !signup);
+    signupTab.classList.toggle("active", signup);
+    loginTab.setAttribute("aria-selected", String(!signup));
+    signupTab.setAttribute("aria-selected", String(signup));
+    $("#authTitle").textContent = signup ? "Deine Jobsuche beginnt hier." : "Schön, dich wiederzusehen.";
+    $("#authSubtitle").textContent = signup
+      ? "Erstelle dein Konto und bring Struktur in deine Jobsuche."
+      : "Melde dich an und mach dort weiter, wo du aufgehört hast.";
+    authSubmit.querySelector("span").textContent = signup ? "Kostenlos registrieren" : "Anmelden";
+    googleAuthBtn.querySelector("span").textContent = signup ? "Mit Google registrieren" : "Mit Google anmelden";
+    $("#authTerms").textContent = signup
+      ? "Mit der Registrierung stimmst du einer sicheren Verarbeitung deiner Daten zu."
+      : "Mit der Anmeldung stimmst du einer sicheren Verarbeitung deiner Daten zu.";
+    authPassword.autocomplete = signup ? "new-password" : "current-password";
+    authPassword.value = "";
+    resetPasswordVisibility();
+    authStatus("");
+  }
+
+  async function loadCloudData(expectedEpoch, expectedUserId, signal) {
+    setSyncState("syncing", "Lädt…");
+    const { data, error } = await db.from("applications")
+      .select("*")
+      .eq("user_id", expectedUserId)
+      .order("datum", { ascending: false, nullsFirst: false })
+      .abortSignal(signal);
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return null;
+    if (error) throw error;
+    return (data || []).map(fromRow);
+  }
+
+  async function loadUserProfile(expectedEpoch, expectedUserId, signal) {
+    const { data, error } = await db.from("user_profiles")
+      .select("display_name,target_role,employment_status,monthly_application_goal,onboarding_completed_at,ai_completed_tasks,cv_path,cv_name,cv_uploaded_at")
+      .eq("user_id", expectedUserId)
+      .maybeSingle()
+      .abortSignal(signal);
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return null;
+    if (error) throw error;
+    return data || null;
+  }
+
+  async function loadInterviews(expectedEpoch, expectedUserId, signal) {
+    const { data, error } = await db.from("interviews")
+      .select("id,user_id,application_id,scheduled_at,stage,format,interviewer,meeting_url,notes,ai_prep,ai_prepared_at,created_at,updated_at")
+      .eq("user_id", expectedUserId)
+      .order("scheduled_at", { ascending: true })
+      .abortSignal(signal);
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return null;
+    if (error) {
+      if (error.code === "42P01") return [];
+      throw error;
     }
+    return data || [];
+  }
+
+  function setOnboardingStep(step) {
+    onboardingStep = Math.max(0, Math.min(3, step));
+    $$('[data-onboarding-step]').forEach((panel) => {
+      const active = Number(panel.dataset.onboardingStep) === onboardingStep;
+      panel.hidden = !active;
+      panel.classList.toggle("active", active);
+    });
+    $$('[data-onboarding-indicator]').forEach((indicator) => {
+      const index = Number(indicator.dataset.onboardingIndicator);
+      indicator.classList.toggle("active", index === onboardingStep);
+      indicator.classList.toggle("done", index < onboardingStep);
+    });
+    onboardingBack.hidden = onboardingStep === 0;
+    onboardingNext.querySelector("span").textContent = onboardingStep === 3 ? "Setup abschließen" : "Weiter";
+    $("#onboardingMessage").textContent = "";
+  }
+
+  function updateOnboardingGoal(value) {
+    const safeValue = Math.max(1, Math.min(50, Number(value) || 10));
+    onboardingGoal.value = String(safeValue);
+    $("#onboardingGoalOutput").querySelector("strong").textContent = String(safeValue);
+    $$('[data-goal]').forEach((button) => button.classList.toggle("active", Number(button.dataset.goal) === safeValue));
+  }
+
+  function showOnboarding() {
+    onboardingForm.reset();
+    $("#onboardingCvLabel").textContent = "Lebenslauf auswählen";
+    employmentStatus = null;
+    $$('[data-employment]').forEach((button) => button.classList.remove("selected"));
+    updateOnboardingGoal(10);
+    setOnboardingStep(0);
+    authShell.hidden = true;
+    mainApp.hidden = true;
+    onboardingShell.hidden = false;
+  }
+
+  function onboardingRequested(user) {
+    let googleIntent = false;
+    try { googleIntent = sessionStorage.getItem("jobply_google_onboarding") === "1"; } catch {}
+    const createdAt = Date.parse(user?.created_at || "");
+    const createdAfterRelease = Number.isFinite(createdAt) && createdAt >= ONBOARDING_RELEASE_AT;
+    return user?.user_metadata?.onboarding_required === true || googleIntent || createdAfterRelease;
+  }
+
+  async function needsOnboarding(user, expectedEpoch, signal) {
+    if (!onboardingRequested(user)) return false;
+    const { data, error } = await db.from("user_profiles")
+      .select("onboarding_completed_at")
+      .eq("user_id", user.id)
+      .maybeSingle()
+      .abortSignal(signal);
+    if (!isActiveAuthContext(expectedEpoch, user.id)) return false;
+    if (error) throw error;
+    return !data?.onboarding_completed_at;
+  }
+
+  function revealMainApp() {
+    onboardingShell.hidden = true;
     let view = "list";
-    try { view = localStorage.getItem(VIEW_KEY) === "insights" ? "insights" : "list"; } catch {}
+    try { const saved = localStorage.getItem(VIEW_KEY); view = ["list", "interviews", "insights"].includes(saved) ? saved : "list"; } catch {}
     if (location.hash === "#statistiken") view = "insights";
+    if (location.hash === "#gespraeche") view = "interviews";
     setView(view);
     document.body.classList.toggle("privacy-mode", state.privacy);
     const privacyButton = $("#privacyBtn");
@@ -2393,38 +3544,254 @@
     privacyButton.setAttribute("aria-pressed", String(state.privacy));
     privacyButton.setAttribute("aria-label", state.privacy ? "Privacy-Modus deaktivieren" : "Privacy-Modus aktivieren");
     privacyButton.title = state.privacy ? "Normale Ansicht wiederherstellen" : "Sichere Ansicht für Screenshots";
+    mainApp.hidden = false;
     render();
     refreshInbound({ quiet: true });
   }
 
-  async function stopApp() {
+  async function completeOnboarding(skipped = false) {
+    if (!currentUser?.id) return;
+    onboardingNext.disabled = true;
+    onboardingSkip.disabled = true;
+    $("#onboardingMessage").textContent = skipped ? "Wird übersprungen…" : "Dein Setup wird gespeichert…";
+    const profile = {
+      user_id: currentUser.id,
+      display_name: skipped ? null : ($("#onboardingName").value.trim().slice(0, 80) || null),
+      target_role: skipped ? null : ($("#onboardingRole").value.trim().slice(0, 120) || null),
+      employment_status: skipped ? null : employmentStatus,
+      monthly_application_goal: skipped ? null : Number(onboardingGoal.value),
+      onboarding_completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    try {
+      const cvFile = skipped ? null : $("#onboardingCv").files?.[0];
+      if (cvFile && !await uploadCv(cvFile, { onboarding: true })) throw new Error("cv_upload_failed");
+      const { error } = await db.from("user_profiles").upsert(profile, { onConflict: "user_id" });
+      if (error) throw error;
+      userProfile = { ...(userProfile || {}), ...profile };
+      try {
+        const { data } = await db.auth.updateUser({ data: { onboarding_required: false } });
+        if (data?.user) currentUser = data.user;
+      } catch {}
+      try { sessionStorage.removeItem("jobply_google_onboarding"); } catch {}
+      revealMainApp();
+    } catch {
+      $("#onboardingMessage").textContent = "Das Setup konnte nicht gespeichert werden. Bitte versuche es erneut.";
+    } finally {
+      onboardingNext.disabled = false;
+      onboardingSkip.disabled = false;
+    }
+  }
+
+  async function startApp(session) {
+    const expectedUserId = session?.user?.id;
+    if (!expectedUserId) return;
+    if (appStarted && currentUser?.id === expectedUserId) {
+      currentUser = session.user;
+      updateNavIdentity();
+      return;
+    }
+
+    const expectedEpoch = invalidateAuthWork();
+    const signal = authAbortController.signal;
+    closeDrawer(true);
+    closeInterviewDialog();
+    closeImportDialog();
+    closeSharePreview();
     closeInboundDialog();
-    currentUser = null;
+    inboundAliasEditor.hidden = true;
+    appStarted = true;
+    currentUser = session.user;
+    // Credentials must never survive in hidden login controls after a
+    // successful authentication or an account switch.
+    authForm.reset();
+    resetPasswordVisibility();
     state.apps = [];
+    state.interviews = [];
     inboundSettings = null;
     inboundSuggestions = [];
     updateInboundBadge();
+    updateNavIdentity();
+    authShell.hidden = true;
+    onboardingShell.hidden = true;
     mainApp.hidden = true;
+    try {
+      const applications = await loadCloudData(expectedEpoch, expectedUserId, signal);
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId) || applications === null) return;
+      state.apps = applications;
+      setSyncState("", "Gespeichert");
+    } catch (error) {
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
+      state.apps = [];
+      setSyncState("error", "Einrichtung nötig");
+      setTimeout(() => toast(error.code === "42P01" ? "Bitte zuerst das Supabase SQL-Skript ausführen" : "Cloud-Daten konnten nicht geladen werden"), 500);
+    }
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
+    try {
+      const interviews = await loadInterviews(expectedEpoch, expectedUserId, signal);
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId) || interviews === null) return;
+      state.interviews = interviews;
+    } catch { state.interviews = []; }
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
+    try {
+      userProfile = await loadUserProfile(expectedEpoch, expectedUserId, signal);
+    } catch {
+      userProfile = null;
+    }
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
+    try {
+      if (await needsOnboarding(currentUser, expectedEpoch, signal)) return showOnboarding();
+    } catch (error) {
+      if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
+      setTimeout(() => toast(error.code === "42P01" ? "Onboarding-Datenbank muss noch eingerichtet werden" : "Onboarding konnte nicht geladen werden"), 400);
+    }
+    revealMainApp();
+  }
+
+  function scrubSensitiveClientState() {
+    stopAiBriefCarousel();
+    state.apps = [];
+    state.interviews = [];
+    userProfile = null;
+    state.draft = null;
+    state.draftOriginal = "";
+    state.isNew = false;
+    state.query = "";
+    inboundSettings = null;
+    inboundSuggestions = [];
+    pendingImport = null;
+    pendingShareCard = null;
+    employmentStatus = null;
+
+    // Reset values first, then remove all rendered user-controlled content.
+    // The structural dialog markup stays intact so another account can log in
+    // without requiring a page reload.
+    document.querySelectorAll("form").forEach((element) => element.reset());
+    document.querySelectorAll("input, textarea").forEach((element) => {
+      if (element.type !== "button" && element.type !== "submit") element.value = "";
+    });
+
+    [els.stats, els.dist, els.filters, els.list, $("#aiBrief"), $("#viewInsights"), linksList,
+      $("#interviewOverview"), $("#interviewList"), notesList, inboundSuggestionsList, importResult, $("#toasts")]
+      .forEach((element) => element?.replaceChildren());
+    statsBuilt = false;
+
+    sharePreviewImage.removeAttribute("src");
+    importResult.hidden = true;
+    inboundAliasEditor.hidden = true;
+    tip.hidden = true;
+    tip.textContent = "";
+    $("#userEmail").textContent = "";
+    $("#settingsAccountMessage").textContent = "";
+    $("#deleteAccountMessage").textContent = "";
+    deleteAccountConfirm.hidden = true;
+    $("#drawerTitle").textContent = "";
+    $("#drawerMeta").textContent = "";
+    $("#drawerAvatar").textContent = "?";
+    emailRecipient.textContent = "";
+    inboundStatusText.textContent = "";
+    inboundDomainSuffix.textContent = "";
+    setMagicStatus("");
+    updateInboundBadge();
+  }
+
+  async function stopApp() {
+    invalidateAuthWork();
+    closeSettings();
+    closeDrawer(true);
+    closeInterviewDialog();
+    closeImportDialog();
+    closeSharePreview();
+    closeInboundDialog();
+    currentUser = null;
+    scrubSensitiveClientState();
+    mainApp.hidden = true;
+    onboardingShell.hidden = true;
     authShell.hidden = false;
-    authStatus("");
+    setAuthMode("login");
+    setAuthBusy(false);
     appStarted = false;
   }
 
-  async function authenticate(createAccount) {
+  async function authenticate() {
     if (!db) return authStatus("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.");
     const email = $("#authEmail").value.trim();
-    const password = $("#authPassword").value;
+    const password = authPassword.value;
     if (!email || password.length < 6) return authStatus("Bitte E-Mail und mindestens 6 Passwort-Zeichen eingeben.");
+    const createAccount = authMode === "signup";
     authStatus(createAccount ? "Konto wird erstellt…" : "Anmeldung läuft…", true);
-    const result = createAccount
-      ? await db.auth.signUp({ email, password })
-      : await db.auth.signInWithPassword({ email, password });
-    if (result.error) return authStatus(friendlyAuthError(result.error));
-    if (createAccount && !result.data.session) authStatus("Konto erstellt. Bitte öffne den Bestätigungslink in deiner E-Mail.", true);
+    setAuthBusy(true);
+    try {
+      const result = createAccount
+        ? await db.auth.signUp({ email, password, options: { data: { onboarding_required: true } } })
+        : await db.auth.signInWithPassword({ email, password });
+      // Credentials must not remain in the DOM after either success or failure.
+      authPassword.value = "";
+      resetPasswordVisibility();
+      if (result.error) return authStatus(friendlyAuthError(result.error));
+      if (result.data.session) await startApp(result.data.session);
+      else if (createAccount) authStatus("Konto erstellt. Bitte öffne den Bestätigungslink in deiner E-Mail.", true);
+    } catch {
+      authPassword.value = "";
+      resetPasswordVisibility();
+      authStatus("Die Verbindung ist fehlgeschlagen. Bitte versuche es erneut.");
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
-  authForm.addEventListener("submit", (event) => { event.preventDefault(); authenticate(false); });
-  signupBtn.addEventListener("click", () => authenticate(true));
+  async function authenticateWithGoogle() {
+    if (!db) return authStatus("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.");
+    authStatus("Google-Anmeldung wird geöffnet…", true);
+    setAuthBusy(true);
+    const redirectTo = `${location.origin}${location.pathname}`;
+    try { sessionStorage.setItem("jobply_google_onboarding", authMode === "signup" ? "1" : "0"); } catch {}
+    try {
+      const { error } = await db.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo, queryParams: { prompt: "select_account" } }
+      });
+      if (error) {
+        try { sessionStorage.removeItem("jobply_google_onboarding"); } catch {}
+        setAuthBusy(false);
+        authStatus("Google-Anmeldung konnte nicht gestartet werden. Bitte versuche es erneut.");
+      }
+    } catch {
+      try { sessionStorage.removeItem("jobply_google_onboarding"); } catch {}
+      setAuthBusy(false);
+      authStatus("Google-Anmeldung konnte nicht gestartet werden. Bitte versuche es erneut.");
+    }
+  }
+
+  authForm.addEventListener("submit", (event) => { event.preventDefault(); void authenticate(); });
+  loginTab.addEventListener("click", () => setAuthMode("login"));
+  signupTab.addEventListener("click", () => setAuthMode("signup"));
+  googleAuthBtn.addEventListener("click", () => void authenticateWithGoogle());
+  authPasswordToggle.addEventListener("click", () => {
+    const show = authPassword.type === "password";
+    authPassword.type = show ? "text" : "password";
+    authPasswordToggle.classList.toggle("showing", show);
+    authPasswordToggle.setAttribute("aria-label", show ? "Passwort ausblenden" : "Passwort anzeigen");
+  });
+  onboardingNext.addEventListener("click", () => {
+    if (onboardingStep < 3) setOnboardingStep(onboardingStep + 1);
+    else void completeOnboarding(false);
+  });
+  onboardingBack.addEventListener("click", () => setOnboardingStep(onboardingStep - 1));
+  onboardingSkip.addEventListener("click", () => void completeOnboarding(true));
+  $("#employmentOptions").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-employment]");
+    if (!button) return;
+    employmentStatus = button.dataset.employment;
+    $$('[data-employment]').forEach((option) => option.classList.toggle("selected", option === button));
+  });
+  onboardingGoal.addEventListener("input", () => updateOnboardingGoal(onboardingGoal.value));
+  $("#onboardingCv").addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    $("#onboardingCvLabel").textContent = file?.name || "Lebenslauf auswählen";
+  });
+  $$('.onboarding-presets [data-goal]').forEach((button) => button.addEventListener("click", () => updateOnboardingGoal(button.dataset.goal)));
+  setAuthMode("login");
 
   async function boot() {
     if (!db) return authStatus("Supabase konnte nicht geladen werden. Bitte Seite neu laden.");
@@ -2432,8 +3799,8 @@
     if (data.session) await startApp(data.session);
     db.auth.onAuthStateChange((event, session) => {
       setTimeout(() => {
-        if (session && !appStarted) startApp(session);
-        else if (!session && appStarted) stopApp();
+        if (session) void startApp(session);
+        else void stopApp();
       }, 0);
     });
   }

@@ -6,3 +6,5 @@ outputs/
 !.env.example
 supabase/.temp/
 supabase/functions/.env
+.vercel
+.vscode/

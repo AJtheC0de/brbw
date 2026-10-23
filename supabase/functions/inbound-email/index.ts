@@ -130,7 +130,7 @@ function safeLog(event: string, fields: { code?: string; status?: number; reques
 
 function processingErrorCode(error: unknown) {
   const message = error instanceof Error ? error.message : "";
-  if (/^(resend_not_configured|openai_not_configured|openai_empty)$/.test(message)) return message;
+  if (/^(resend_not_configured|openai_not_configured|openai_empty|inbound_quota_exceeded|inbound_quota_unavailable)$/.test(message)) return message;
   if (/^(resend_fetch|openai)_\d{3}$/.test(message)) return message;
   return "processing_failed";
 }
@@ -170,19 +170,37 @@ function outputText(value: Record<string, unknown>) {
   return "";
 }
 
-async function updateMessage(admin: SupabaseClient, messageId: string, values: Record<string, unknown>) {
-  const { error } = await admin.from("inbound_messages").update(values).eq("id", messageId);
+async function updateMessage(admin: SupabaseClient, messageId: string, userId: string, values: Record<string, unknown>) {
+  const { error } = await admin.from("inbound_messages").update(values)
+    .eq("id", messageId)
+    .eq("user_id", userId);
   if (error) safeLog("inbound_message_update_failed", { code: error.code || "database_error" });
+}
+
+async function reserveInboundQuota(admin: SupabaseClient, userId: string) {
+  const { data, error } = await admin.rpc("consume_inbound_email_quota", {
+    target_user_id: userId,
+  });
+  if (error) {
+    safeLog("inbound_quota_check_failed", { code: error.code || "database_error" });
+    throw new Error("inbound_quota_unavailable");
+  }
+  const quota = data?.[0] as { allowed?: boolean } | undefined;
+  if (!quota?.allowed) throw new Error("inbound_quota_exceeded");
 }
 
 async function processInbound(admin: SupabaseClient, messageRowId: string, userId: string, event: ResendEvent) {
   try {
-    await updateMessage(admin, messageRowId, { status: "processing" });
+    await updateMessage(admin, messageRowId, userId, { status: "processing" });
     const resendKey = Deno.env.get("RESEND_API_KEY");
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
     if (!resendKey) throw new Error("resend_not_configured");
     if (!openaiKey) throw new Error("openai_not_configured");
     const emailId = String(event.data?.email_id || "");
+
+    // Reserve both the fixed burst and daily allowance atomically before any
+    // provider content is fetched or OpenAI credit can be consumed.
+    await reserveInboundQuota(admin, userId);
 
     const emailResponse = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`, {
       headers: { Authorization: `Bearer ${resendKey}`, Accept: "application/json" },
@@ -247,7 +265,7 @@ async function processInbound(admin: SupabaseClient, messageRowId: string, userI
     const confidence = Math.max(0, Math.min(1, Number(result.confidence) || 0));
 
     if (eventType === "unknown") {
-      await updateMessage(admin, messageRowId, { status: "ignored", processed_at: new Date().toISOString() });
+      await updateMessage(admin, messageRowId, userId, { status: "ignored", processed_at: new Date().toISOString() });
       await admin.from("automation_runs").insert({ user_id: userId, operation: "inbound_email", status: "succeeded", metadata: { outcome: "ignored", model } });
       return;
     }
@@ -281,7 +299,7 @@ async function processInbound(admin: SupabaseClient, messageRowId: string, userI
       .maybeSingle();
     if (suggestionError) throw suggestionError;
 
-    await updateMessage(admin, messageRowId, {
+    await updateMessage(admin, messageRowId, userId, {
       status: "suggested",
       suggestion_id: suggestion?.id || null,
       processed_at: new Date().toISOString(),
@@ -295,7 +313,7 @@ async function processInbound(admin: SupabaseClient, messageRowId: string, userI
   } catch (error) {
     const errorCode = processingErrorCode(error);
     safeLog("inbound_email_processing_failed", { code: errorCode });
-    await updateMessage(admin, messageRowId, { status: "failed", error_code: errorCode, processed_at: new Date().toISOString() });
+    await updateMessage(admin, messageRowId, userId, { status: "failed", error_code: errorCode, processed_at: new Date().toISOString() });
     try {
       await admin.from("automation_runs").insert({ user_id: userId, operation: "inbound_email", status: "failed", error_code: errorCode });
     } catch { /* Preserve the original processing failure. */ }

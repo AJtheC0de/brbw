@@ -1,13 +1,19 @@
 project_id = "bwrb"
 
 [functions.foundation-health]
-verify_jwt = false
+verify_jwt = true
 
 [functions.magic-import]
-verify_jwt = false
+verify_jwt = true
 
 [functions.inbound-settings]
-verify_jwt = false
+verify_jwt = true
 
 [functions.inbound-email]
 verify_jwt = false
+
+[functions.delete-account]
+verify_jwt = true
+
+[functions.interview-prep]
+verify_jwt = true

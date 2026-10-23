@@ -63,7 +63,7 @@ async function writeAudit(client: SupabaseClient | null, values: Record<string, 
 }
 
 async function enforceRateLimit(client: SupabaseClient) {
-  const { data, error } = await client.rpc("consume_rate_limit", { bucket_name: "magic-import", max_requests: 10, window_seconds: 3600 });
+  const { data, error } = await client.rpc("consume_rate_limit", { bucket_name: "magic-import" });
   if (error) throw new Error(`Rate limit check failed: ${error.message}`);
   if (!data?.[0]?.allowed) throw new HttpError(429, "Zu viele Importe. Bitte versuche es sp\u00e4ter erneut.", "rate_limited");
 }
@@ -80,7 +80,7 @@ async function assertSafePublicUrl(input: string) {
   let url: URL; try { url = new URL(input); } catch { throw new HttpError(400, "Ung\u00fcltige URL", "invalid_url"); }
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new HttpError(400, "Nur \u00f6ffentliche HTTP(S)-URLs sind erlaubt.", "invalid_url");
   const host = url.hostname.toLowerCase().replace(/\.$/, "");
-  if (!isAllowedJobHost(host, Deno.env.get("MAGIC_IMPORT_ALLOWED_HOSTS") || "")) {
+  if (!isAllowedJobHost(host)) {
     throw new HttpError(400, "Diese Jobplattform wird noch nicht unterst\u00fctzt.", "host_not_allowed");
   }
   if (!host || PRIVATE_HOSTS.has(host) || host.endsWith(".localhost") || host.endsWith(".local") || blockedAddress(host)) throw new HttpError(400, "Private Netzwerkadressen sind nicht erlaubt.", "private_url");

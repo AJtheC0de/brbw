@@ -140,7 +140,9 @@ Deno.serve(async (request) => {
           .update({ alias_slug: alias, updated_at: new Date().toISOString() })
           .eq("id", address.id).eq("user_id", authData.user.id)
           .select("id, alias_token, alias_slug, provider, enabled, created_at, updated_at").single();
-        if (updated.error?.code === "23505") return json(request, { ok: false, error: "alias_taken", message: "Diese Adresse ist bereits vergeben." }, 409);
+        if (updated.error?.code === "23505") {
+          return json(request, { ok: false, error: "alias_unavailable", message: "Dieser Alias konnte nicht gespeichert werden." }, 409);
+        }
         if (updated.error) throw updated.error;
         address = updated.data;
       }

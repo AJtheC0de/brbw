@@ -13,6 +13,7 @@ export const DEFAULT_JOB_HOSTS = [
   "personio.com",
   "personio.de",
   "recruitee.com",
+  "siemens.com",
   "smartrecruiters.com",
   "softgarden.io",
   "successfactors.com",
@@ -23,14 +24,8 @@ export const DEFAULT_JOB_HOSTS = [
   "xing.com",
 ] as const;
 
-export function normalizedAllowedHosts(configured = "") {
-  return [...DEFAULT_JOB_HOSTS, ...configured.split(",")]
-    .map((host) => host.trim().toLowerCase().replace(/^\.+|\.+$/g, ""))
-    .filter(Boolean);
-}
-
-export function isAllowedJobHost(hostname: string, configured = "") {
+export function isAllowedJobHost(hostname: string) {
   const host = hostname.trim().toLowerCase().replace(/\.$/, "");
-  return normalizedAllowedHosts(configured)
+  return DEFAULT_JOB_HOSTS
     .some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
 }
