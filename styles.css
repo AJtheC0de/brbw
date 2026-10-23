@@ -2909,8 +2909,32 @@ canvas { max-width: 100%; }
   .drawer-body input[type="datetime-local"],
   .drawer-body input[type="time"],
   .drawer-body input[type="month"] {
+    -webkit-appearance: none;
+    appearance: none;
+    inline-size: 100% !important;
+    width: 100% !important;
     -webkit-min-logical-width: 0;
     min-inline-size: 0;
+    max-inline-size: 100% !important;
+    max-width: 100% !important;
+    overflow: hidden;
+    text-align: center;
+  }
+  .drawer-body input[type="date"]::-webkit-date-and-time-value,
+  .drawer-body input[type="datetime-local"]::-webkit-date-and-time-value,
+  .drawer-body input[type="time"]::-webkit-date-and-time-value,
+  .drawer-body input[type="month"]::-webkit-date-and-time-value {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    text-align: center;
+  }
+  .drawer-body input[type="date"]::-webkit-datetime-edit,
+  .drawer-body input[type="datetime-local"]::-webkit-datetime-edit,
+  .drawer-body input[type="time"]::-webkit-datetime-edit,
+  .drawer-body input[type="month"]::-webkit-datetime-edit {
+    min-width: 0;
+    overflow: hidden;
   }
   .drawer-body .field-grid > *,
   .drawer-body .field-wide,
@@ -2923,6 +2947,7 @@ canvas { max-width: 100%; }
     max-width: 100%;
   }
   .drawer-body .followup-content-inner { width: 100%; }
+  .drawer-body .field { overflow: hidden; }
   .email-template-tabs {
     width: 100%;
     max-width: 100%;
@@ -2955,6 +2980,26 @@ canvas { max-width: 100%; }
     flex: 1 1 0;
     width: auto;
     min-width: 0;
+  }
+
+  .drawer-body > .magic-import {
+    height: auto;
+    min-height: 0;
+    padding: 16px 16px 20px;
+  }
+  .magic-import-row {
+    grid-template-columns: minmax(0,.9fr) minmax(0,1.2fr);
+  }
+  .magic-import-row #pasteJobUrlBtn,
+  .magic-import-row #runMagicImportBtn {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 9px;
+  }
+  .magic-import-row #runMagicImportBtn { font-size: 12.5px; }
+  .magic-import-status:empty {
+    min-height: 0;
+    margin-top: 0;
   }
 
   .list.months-grid { gap: 10px; }
