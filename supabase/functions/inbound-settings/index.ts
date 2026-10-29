@@ -149,6 +149,13 @@ Deno.serve(async (request) => {
     }
     if (body.enabled !== undefined) {
       if (typeof body.enabled !== "boolean") return json(request, { ok: false, error: "invalid_enabled" }, 400);
+      if (body.enabled) {
+        const consent = await admin.from("user_profiles").select("ai_processing_consent_at").eq("user_id", authData.user.id).maybeSingle();
+        if (consent.error) throw consent.error;
+        if (!consent.data?.ai_processing_consent_at) {
+          return json(request, { ok: false, error: "ai_consent_required", message: "Die KI-Verarbeitung ist nicht freigegeben." }, 403);
+        }
+      }
       const updated = await admin.from("inbound_addresses")
         .update({ enabled: body.enabled, updated_at: new Date().toISOString() })
         .eq("id", address.id).eq("user_id", authData.user.id)

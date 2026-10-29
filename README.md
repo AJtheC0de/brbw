@@ -16,9 +16,19 @@ Web-App (HTML/CSS/JS) zum Tracken von Bewerbungen mit geschützter Supabase-Sync
 - Personalisierte E-Mail-Vorlagen für Nachfragen nach 7/14/21 Tagen, Interview-Dank und nächste Prozessschritte
 - E-Mail-Entwurf vorab bearbeiten oder kopieren und mit Empfänger, Betreff und Nachricht im Standard-Mailprogramm öffnen
 
-Die Daten werden nach der Anmeldung in Supabase gespeichert und zusätzlich lokal
-zwischengespeichert. Beim ersten Öffnen werden die Einträge aus `data/bewerbungen.csv`
-einmalig in das persönliche Konto übernommen.
+Die Daten werden nach der Anmeldung ausschliesslich in Supabase gespeichert. Im Browser
+liegen nur die Anmeldesitzung und Anzeige-Einstellungen; ältere lokale Bewerbungsspeicher
+werden beim Start entfernt.
+
+## Datenschutz
+
+- Datenschutzerklärung und Impressum: `datenschutz.html`, `impressum.html` (Platzhalter `[…]` vor dem Launch ausfüllen)
+- Registrierung nur mit bestätigter Kenntnisnahme der Datenschutzerklärung (keine Einwilligung – die Grundverarbeitung beruht auf Vertragserfüllung); Version und Zeitpunkt werden im Profil gespeichert
+- KI-Funktionen (Interviewvorbereitung, E-Mail-Auswertung) und die Nutzung des Lebenslaufs sind
+  Opt-in unter Einstellungen → Datenschutz & KI und werden in den Edge Functions serverseitig erzwungen
+- Automatische Löschfristen per `pg_cron` (`public.purge_expired_personal_data`)
+- Keine Drittanbieter beim Seitenaufruf: Schrift (`fonts/`) und Supabase-JS (`vendor/`) werden selbst gehostet
+- Betreiber-Checkliste (DPAs, Regionen, Supabase-Einstellungen): `docs/DATENSCHUTZ-BETRIEB.md`
 
 ## Supabase einrichten
 

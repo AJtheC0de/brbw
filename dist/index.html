@@ -8,10 +8,8 @@
   <link rel="icon" href="icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="manifest" href="icons/site.webmanifest">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261024-2">
+  <link rel="preload" href="fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="styles.css?v=20261029-1">
 </head>
 <body>
   <div class="bg-glow" aria-hidden="true"></div>
@@ -89,12 +87,17 @@
             <span>Passwort</span>
             <span class="auth-input">
               <svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-              <input id="authPassword" type="password" autocomplete="current-password" minlength="6" required placeholder="Mindestens 6 Zeichen">
+              <input id="authPassword" type="password" autocomplete="current-password" minlength="10" required placeholder="Mindestens 10 Zeichen">
               <button class="auth-password-toggle" id="authPasswordToggle" type="button" aria-label="Passwort anzeigen">
                 <svg class="eye-open" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>
                 <svg class="eye-closed" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 6.1A9.7 9.7 0 0 1 12 6c6 0 9.5 6 9.5 6a16 16 0 0 1-2.2 3M6.2 6.2C3.8 7.8 2.5 12 2.5 12s3.5 6 9.5 6a9 9 0 0 0 3-.5"/></svg>
               </button>
             </span>
+          </label>
+
+          <label class="auth-consent" id="authConsent" hidden>
+            <input id="authConsentInput" type="checkbox">
+            <span>Ich habe die <a href="datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung</a> zur Kenntnis genommen.</span>
           </label>
 
           <p class="auth-message" id="authMessage" role="status"></p>
@@ -116,7 +119,8 @@
           <span>Mit Google anmelden</span>
         </button>
 
-        <p class="auth-terms" id="authTerms">Mit der Anmeldung stimmst du einer sicheren Verarbeitung deiner Daten zu.</p>
+        <p class="auth-terms" id="authTerms">Es gilt unsere Datenschutzerklärung.</p>
+        <p class="auth-legal"><a href="datenschutz.html" target="_blank" rel="noopener">Datenschutz</a><span aria-hidden="true">·</span><a href="impressum.html" target="_blank" rel="noopener">Impressum</a></p>
         <p class="auth-privacy"><span></span> Deine Bewerbungsdaten bleiben privat und gehören nur dir.</p>
       </section>
     </div>
@@ -203,9 +207,13 @@
                 <span><strong id="onboardingCvLabel">Lebenslauf auswählen</strong><small>PDF oder DOCX · maximal 10 MB</small></span>
                 <input id="onboardingCv" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
               </label>
-              <p class="cv-privacy-note">Privat gespeichert und nur für deine persönlichen KI-Vorbereitungen verwendet.</p>
+              <p class="cv-privacy-note">Privat gespeichert. An die KI wird dein Lebenslauf erst gesendet, wenn du es in den Einstellungen unter „Datenschutz &amp; KI“ ausdrücklich erlaubst.</p>
             </div>
 
+            <label class="auth-consent onboarding-consent" id="onboardingConsent" hidden>
+              <input id="onboardingConsentInput" type="checkbox">
+              <span>Ich habe die <a href="datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung</a> zur Kenntnis genommen.</span>
+            </label>
             <p class="onboarding-message" id="onboardingMessage" role="status"></p>
             <footer class="onboarding-actions">
               <button class="onboarding-back" id="onboardingBack" type="button" hidden>
@@ -388,6 +396,22 @@
       </section>
 
       <section class="settings-section">
+        <div class="settings-section-title"><span>Datenschutz &amp; KI</span><small>Du entscheidest, was an die KI geht</small></div>
+        <div class="settings-consent-list">
+          <label class="settings-consent">
+            <input id="aiConsentInput" type="checkbox">
+            <span><strong>KI-Funktionen erlauben</strong><small>Für Interviewvorbereitung und E-Mail-Auswertung werden die dafür nötigen Inhalte an OpenAI übermittelt (ohne Speicherung als Trainingsdaten). Jederzeit widerrufbar.</small></span>
+          </label>
+          <label class="settings-consent">
+            <input id="aiCvConsentInput" type="checkbox">
+            <span><strong>Lebenslauf für KI-Vorbereitung verwenden</strong><small>Dein CV wird nur bei einer angeforderten Vorbereitung an OpenAI gesendet. Ohne Freigabe bleibt er ausschliesslich in deinem privaten Speicher.</small></span>
+          </label>
+          <span class="settings-consent-message" id="consentMessage" role="status"></span>
+        </div>
+        <p class="settings-legal"><a href="datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung</a><span aria-hidden="true">·</span><a href="impressum.html" target="_blank" rel="noopener">Impressum</a></p>
+      </section>
+
+      <section class="settings-section">
         <div class="settings-section-title"><span>Sitzung</span></div>
         <button class="settings-signout" id="settingsSignoutBtn" type="button"><span id="userEmail"></span><strong>Abmelden</strong></button>
       </section>
@@ -395,9 +419,9 @@
       <section class="settings-section danger-zone">
         <div class="settings-section-title"><span>Gefahrenzone</span><small>Diese Aktionen können nicht rückgängig gemacht werden</small></div>
         <button class="danger-row" id="deleteAllDataBtn" type="button"><span><strong>Alle Daten löschen</strong><small>Bewerbungen, Automationen und Profil – der Account bleibt</small></span><b>Löschen</b></button>
-        <button class="danger-row" id="revealDeleteAccountBtn" type="button"><span><strong>Account endgültig löschen</strong><small>Account und alle zugehörigen Daten entfernen</small></span><b>Account löschen</b></button>
+        <button class="danger-row" id="revealDeleteAccountBtn" type="button"><span><strong>Account endgültig löschen</strong><small>Login, Bewerbungen, Lebenslauf und Automationen sofort entfernen</small></span><b>Account löschen</b></button>
         <div class="delete-account-confirm" id="deleteAccountConfirm" hidden>
-          <p>Tippe <strong>LÖSCHEN</strong>, um die endgültige Löschung zu bestätigen.</p>
+          <p>Tippe <strong>LÖSCHEN</strong>, um die endgültige Löschung zu bestätigen. Deine Daten werden sofort aus Jobply entfernt. Technische Sicherungskopien und Protokolle unserer Dienstleister laufen gemäss <a href="datenschutz.html#speicherdauer" target="_blank" rel="noopener">Datenschutzerklärung</a> automatisch aus.</p>
           <div><input id="deleteAccountInput" autocomplete="off" spellcheck="false" placeholder="LÖSCHEN"><button class="btn danger-solid" id="confirmDeleteAccountBtn" type="button" disabled>Endgültig löschen</button></div>
           <span id="deleteAccountMessage" role="status"></span>
         </div>
@@ -744,9 +768,8 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <input type="file" id="fileInput" accept=".csv,.json,text/csv,application/json" hidden>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.102.0/dist/umd/supabase.min.js"
-    integrity="sha384-1qxdq7qui0E5OGQx7KlSCCpPydLIt8lgUjqM3jGxWLXq9AIGC661VIvU/NPT6BQP"
-    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=20261024-2"></script>
+  <script src="vendor/supabase-2.102.0.min.js"
+    integrity="sha384-1qxdq7qui0E5OGQx7KlSCCpPydLIt8lgUjqM3jGxWLXq9AIGC661VIvU/NPT6BQP"></script>
+  <script src="app.js?v=20261029-1"></script>
 </body>
 </html>

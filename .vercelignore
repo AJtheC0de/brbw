@@ -8,3 +8,4 @@ supabase/
 .env.*
 bewerbungsnachweis-*.csv
 README.md
+docs/

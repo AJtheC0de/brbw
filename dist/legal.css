@@ -1,0 +1,40 @@
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("fonts/inter-latin-wght-normal.woff2") format("woff2");
+}
+
+:root {
+  --bg: #f6f7fb;
+  --card: #ffffff;
+  --text: #0f172a;
+  --text-2: #475569;
+  --text-3: #94a3b8;
+  --border: rgba(15, 23, 42, 0.08);
+  --accent: #6366f1;
+  --mark: #fef3c7;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.65 "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 780px; margin: 0 auto; padding: 40px 16px 72px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 28px; }
+header img { height: 28px; }
+header a { color: var(--accent); font-size: 13px; font-weight: 650; text-decoration: none; }
+article { padding: clamp(22px, 5vw, 44px); border: 1px solid var(--border); border-radius: 18px; background: var(--card); }
+h1 { margin: 0 0 6px; font-size: clamp(26px, 5vw, 34px); line-height: 1.2; letter-spacing: -0.02em; }
+h2 { margin: 34px 0 10px; font-size: 18px; line-height: 1.35; }
+h3 { margin: 22px 0 6px; font-size: 15px; }
+p, li { color: var(--text-2); }
+a { color: var(--accent); }
+.meta { margin: 0 0 24px; color: var(--text-3); font-size: 13px; }
+.todo { padding: 0 4px; border-radius: 4px; background: var(--mark); color: #92400e; font-weight: 600; }
+.table-wrap { overflow-x: auto; margin: 10px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { padding: 9px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; color: var(--text-2); }
+th { color: var(--text); font-weight: 650; }
+footer { margin-top: 24px; color: var(--text-3); font-size: 12.5px; text-align: center; }
+footer a { margin: 0 6px; }

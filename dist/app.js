@@ -10,6 +10,9 @@
   const PRIVACY_KEY = "bwrb.privacyMode";
   const MONTH_LAYOUT_KEY = "bwrb.monthLayout";
   const ONBOARDING_RELEASE_AT = Date.parse("2026-10-22T23:20:00.000Z");
+  const PRIVACY_POLICY_VERSION = "2026-10-29";
+  const PRIVACY_ACCEPT_KEY = "jobply_privacy_accepted";
+  const MIN_SIGNUP_PASSWORD = 10;
   const SUPABASE_URL = "https://coxmnerqoaclawbbgipx.supabase.co";
   const SUPABASE_KEY = "sb_publishable_2oKHLoM5fCrNiQ1FCpvPig_0Ci3zISR";
   clearLegacyApplicationStorage();
@@ -1742,6 +1745,7 @@
   }
 
   async function createInterviewPrep(interview) {
+    if (!await ensureAiConsent()) return;
     const button = $(`[data-interview-id="${CSS.escape(interview.id)}"] [data-interview-prep]`);
     if (button) { button.disabled = true; button.textContent = "KI bereitet vor…"; }
     try {
@@ -1749,7 +1753,7 @@
       if (error || !data?.ok) throw new Error(data?.error || "prep_failed");
       interview.ai_prep = data.prep; interview.ai_prepared_at = data.preparedAt; interview._expanded = true;
       renderInterviews();
-      toast(data.enrichedFromUrl ? "Inserat gelesen und Vorbereitung neu erstellt" : data.usedCv ? "Persönliche Vorbereitung erstellt" : "Vorbereitung ohne CV erstellt");
+      toast(data.enrichedFromUrl ? "Inserat gelesen und Vorbereitung neu erstellt" : data.usedCv ? "Persönliche Vorbereitung erstellt" : userProfile?.cv_path ? "Vorbereitung ohne CV erstellt – CV-Freigabe unter Einstellungen" : "Vorbereitung ohne CV erstellt");
     } catch { toast("KI-Vorbereitung konnte nicht erstellt werden"); if (button) { button.disabled = false; button.textContent = "KI-Vorbereitung"; } }
   }
 
@@ -2556,8 +2560,10 @@
     const expectedEpoch = authEpoch;
     const expectedUserId = currentUser?.id;
     if (!expectedUserId) return;
-    toggleInboundBtn.disabled = true;
     const next = !inboundSettings.enabled;
+    if (next && !await ensureAiConsent()) return;
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
+    toggleInboundBtn.disabled = true;
     const { data, error } = await db.functions.invoke("inbound-settings", { body: { enabled: next } });
     if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
     if (error || !data?.ok) {
@@ -2819,7 +2825,7 @@
     try {
       const expectedUserId = currentUser.id;
       const { data, error } = await db.from("user_profiles")
-        .select("display_name,target_role,employment_status,monthly_application_goal,ai_completed_tasks,cv_path,cv_name,cv_uploaded_at")
+        .select("display_name,target_role,employment_status,monthly_application_goal,ai_completed_tasks,cv_path,cv_name,cv_uploaded_at,privacy_policy_version,privacy_accepted_at,ai_processing_consent_at,ai_cv_consent_at")
         .eq("user_id", expectedUserId).maybeSingle();
       if (error) throw error;
       if (!settingsOpen || currentUser?.id !== expectedUserId) return;
@@ -2828,6 +2834,7 @@
       $("#settingsEmployment").value = data?.employment_status || "";
       $("#settingsGoal").value = data?.monthly_application_goal || 10;
       $("#settingsCvStatus").textContent = data?.cv_name ? `${data.cv_name} · privat gespeichert` : "Noch kein Lebenslauf hinterlegt";
+      renderConsentSettings(data);
       $("#settingsAccountMessage").textContent = "";
       userProfile = data || null;
       updateNavIdentity(data);
@@ -2918,6 +2925,54 @@
     return true;
   }
 
+  async function saveConsent(changes) {
+    if (!currentUser?.id) return false;
+    const expectedUserId = currentUser.id;
+    const row = { user_id: expectedUserId, ...changes, updated_at: new Date().toISOString() };
+    const { error } = await db.from("user_profiles").upsert(row, { onConflict: "user_id" });
+    if (error || currentUser?.id !== expectedUserId) return false;
+    userProfile = { ...(userProfile || {}), ...changes };
+    return true;
+  }
+
+  // AI features send personal content to OpenAI and therefore require an
+  // explicit, revocable opt-in. The Edge Functions enforce the same rule.
+  async function ensureAiConsent() {
+    if (userProfile?.ai_processing_consent_at) return true;
+    const accepted = confirm("KI-Funktionen freigeben?\n\nFür diese Funktion werden die nötigen Inhalte (z.B. Stellenbeschreibung, Notizen, weitergeleitete E-Mail) an OpenAI übermittelt und dort nicht für Training verwendet. Deinen Lebenslauf senden wir nur mit separater Freigabe.\n\nDu kannst die Freigabe jederzeit in den Einstellungen unter „Datenschutz & KI“ widerrufen.");
+    if (!accepted) return false;
+    const saved = await saveConsent({ ai_processing_consent_at: new Date().toISOString() });
+    if (!saved) toast("Freigabe konnte nicht gespeichert werden");
+    return saved;
+  }
+
+  function renderConsentSettings(profile = userProfile) {
+    $("#aiConsentInput").checked = Boolean(profile?.ai_processing_consent_at);
+    $("#aiCvConsentInput").checked = Boolean(profile?.ai_cv_consent_at);
+    $("#aiCvConsentInput").disabled = !profile?.ai_processing_consent_at;
+    $("#consentMessage").textContent = "";
+  }
+
+  async function updateConsent(field, enabled) {
+    const message = $("#consentMessage");
+    const changes = { [field]: enabled ? new Date().toISOString() : null };
+    // Revoking AI processing also revokes the CV release that depends on it.
+    if (field === "ai_processing_consent_at" && !enabled) changes.ai_cv_consent_at = null;
+    message.textContent = "Wird gespeichert…";
+    if (!await saveConsent(changes)) {
+      renderConsentSettings();
+      message.textContent = "Freigabe konnte nicht gespeichert werden.";
+      return;
+    }
+    renderConsentSettings();
+    message.textContent = enabled ? "Freigabe gespeichert." : "Freigabe widerrufen.";
+    if (field === "ai_processing_consent_at" && !enabled && inboundSettings?.enabled) {
+      const { data, error } = await db.functions.invoke("inbound-settings", { body: { enabled: false } });
+      if (!error && data?.ok) { inboundSettings = data.data; renderInboundSettings(); }
+      message.textContent = "Freigabe widerrufen. Die E-Mail-Automatisierung wurde deaktiviert.";
+    }
+  }
+
   async function deleteOwnAccount() {
     if (!currentUser?.id || deleteAccountInput.value.trim() !== "LÖSCHEN") return;
     const button = $("#confirmDeleteAccountBtn"), message = $("#deleteAccountMessage");
@@ -2929,7 +2984,7 @@
       closeSettings();
       await db.auth.signOut({ scope: "local" }).catch(() => {});
       await stopApp();
-      authStatus("Dein Account und alle zugehörigen Daten wurden gelöscht.", true);
+      authStatus("Dein Account wurde gelöscht und alle Daten aus Jobply entfernt.", true);
     } catch {
       message.textContent = "Der Account konnte nicht gelöscht werden. Bitte versuche es erneut.";
       button.disabled = false;
@@ -3054,6 +3109,8 @@
   $("#openPremiumStatsBtn").addEventListener("click", () => { closeSettings(); setView("insights"); });
   $("#settingsSignoutBtn").addEventListener("click", () => { closeSettings(); db.auth.signOut(); });
   $("#deleteAllDataBtn").addEventListener("click", deleteAllUserData);
+  $("#aiConsentInput").addEventListener("change", (event) => void updateConsent("ai_processing_consent_at", event.target.checked));
+  $("#aiCvConsentInput").addEventListener("change", (event) => void updateConsent("ai_cv_consent_at", event.target.checked));
   $("#revealDeleteAccountBtn").addEventListener("click", () => {
     deleteAccountConfirm.hidden = !deleteAccountConfirm.hidden;
     if (!deleteAccountConfirm.hidden) deleteAccountInput.focus();
@@ -3430,9 +3487,13 @@
     authSubmit.querySelector("span").textContent = signup ? "Kostenlos registrieren" : "Anmelden";
     googleAuthBtn.querySelector("span").textContent = signup ? "Mit Google registrieren" : "Mit Google anmelden";
     $("#authTerms").textContent = signup
-      ? "Mit der Registrierung stimmst du einer sicheren Verarbeitung deiner Daten zu."
-      : "Mit der Anmeldung stimmst du einer sicheren Verarbeitung deiner Daten zu.";
+      ? "Das gilt auch für die Registrierung mit Google."
+      : "Für die Nutzung gilt unsere Datenschutzerklärung.";
+    $("#authConsent").hidden = !signup;
+    $("#authConsentInput").checked = false;
     authPassword.autocomplete = signup ? "new-password" : "current-password";
+    authPassword.minLength = signup ? MIN_SIGNUP_PASSWORD : 1;
+    authPassword.placeholder = signup ? `Mindestens ${MIN_SIGNUP_PASSWORD} Zeichen` : "Dein Passwort";
     authPassword.value = "";
     resetPasswordVisibility();
     authStatus("");
@@ -3452,7 +3513,7 @@
 
   async function loadUserProfile(expectedEpoch, expectedUserId, signal) {
     const { data, error } = await db.from("user_profiles")
-      .select("display_name,target_role,employment_status,monthly_application_goal,onboarding_completed_at,ai_completed_tasks,cv_path,cv_name,cv_uploaded_at")
+      .select("display_name,target_role,employment_status,monthly_application_goal,onboarding_completed_at,ai_completed_tasks,cv_path,cv_name,cv_uploaded_at,privacy_policy_version,privacy_accepted_at,ai_processing_consent_at,ai_cv_consent_at")
       .eq("user_id", expectedUserId)
       .maybeSingle()
       .abortSignal(signal);
@@ -3506,6 +3567,8 @@
     $$('[data-employment]').forEach((button) => button.classList.remove("selected"));
     updateOnboardingGoal(10);
     setOnboardingStep(0);
+    $("#onboardingConsent").hidden = Boolean(privacyAcceptance(currentUser).privacy_accepted_at || userProfile?.privacy_accepted_at);
+    $("#onboardingConsentInput").checked = false;
     authShell.hidden = true;
     mainApp.hidden = true;
     onboardingShell.hidden = false;
@@ -3549,8 +3612,25 @@
     refreshInbound({ quiet: true });
   }
 
+  // The acknowledgement given at sign-up is recorded with the policy version so it
+  // can be proven later. Google sign-ups carry it through sessionStorage.
+  function privacyAcceptance(user) {
+    const metadata = user?.user_metadata || {};
+    let stored = null;
+    try { stored = JSON.parse(sessionStorage.getItem(PRIVACY_ACCEPT_KEY) || "null"); } catch {}
+    const version = metadata.privacy_policy_version || stored?.version;
+    const acceptedAt = metadata.privacy_accepted_at || stored?.at;
+    if (!version || !acceptedAt || userProfile?.privacy_accepted_at) return {};
+    return { privacy_policy_version: String(version).slice(0, 20), privacy_accepted_at: acceptedAt };
+  }
+
   async function completeOnboarding(skipped = false) {
     if (!currentUser?.id) return;
+    const consentRequired = !$("#onboardingConsent").hidden;
+    if (consentRequired && !$("#onboardingConsentInput").checked) {
+      $("#onboardingMessage").textContent = "Bitte bestätige, dass du die Datenschutzerklärung zur Kenntnis genommen hast.";
+      return;
+    }
     onboardingNext.disabled = true;
     onboardingSkip.disabled = true;
     $("#onboardingMessage").textContent = skipped ? "Wird übersprungen…" : "Dein Setup wird gespeichert…";
@@ -3561,7 +3641,10 @@
       employment_status: skipped ? null : employmentStatus,
       monthly_application_goal: skipped ? null : Number(onboardingGoal.value),
       onboarding_completed_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      ...(consentRequired
+        ? { privacy_policy_version: PRIVACY_POLICY_VERSION, privacy_accepted_at: new Date().toISOString() }
+        : privacyAcceptance(currentUser))
     };
     try {
       const cvFile = skipped ? null : $("#onboardingCv").files?.[0];
@@ -3573,7 +3656,7 @@
         const { data } = await db.auth.updateUser({ data: { onboarding_required: false } });
         if (data?.user) currentUser = data.user;
       } catch {}
-      try { sessionStorage.removeItem("jobply_google_onboarding"); } catch {}
+      try { sessionStorage.removeItem("jobply_google_onboarding"); sessionStorage.removeItem(PRIVACY_ACCEPT_KEY); } catch {}
       revealMainApp();
     } catch {
       $("#onboardingMessage").textContent = "Das Setup konnte nicht gespeichert werden. Bitte versuche es erneut.";
@@ -3717,13 +3800,19 @@
     if (!db) return authStatus("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.");
     const email = $("#authEmail").value.trim();
     const password = authPassword.value;
-    if (!email || password.length < 6) return authStatus("Bitte E-Mail und mindestens 6 Passwort-Zeichen eingeben.");
     const createAccount = authMode === "signup";
+    if (!email || !password) return authStatus("Bitte E-Mail und Passwort eingeben.");
+    if (createAccount && password.length < MIN_SIGNUP_PASSWORD) return authStatus(`Bitte wähle ein Passwort mit mindestens ${MIN_SIGNUP_PASSWORD} Zeichen.`);
+    if (createAccount && !$("#authConsentInput").checked) return authStatus("Bitte bestätige, dass du die Datenschutzerklärung zur Kenntnis genommen hast.");
     authStatus(createAccount ? "Konto wird erstellt…" : "Anmeldung läuft…", true);
     setAuthBusy(true);
     try {
       const result = createAccount
-        ? await db.auth.signUp({ email, password, options: { data: { onboarding_required: true } } })
+        ? await db.auth.signUp({ email, password, options: { data: {
+          onboarding_required: true,
+          privacy_policy_version: PRIVACY_POLICY_VERSION,
+          privacy_accepted_at: new Date().toISOString(),
+        } } })
         : await db.auth.signInWithPassword({ email, password });
       // Credentials must not remain in the DOM after either success or failure.
       authPassword.value = "";
@@ -3742,6 +3831,10 @@
 
   async function authenticateWithGoogle() {
     if (!db) return authStatus("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.");
+    if (authMode === "signup" && !$("#authConsentInput").checked) return authStatus("Bitte bestätige, dass du die Datenschutzerklärung zur Kenntnis genommen hast.");
+    if (authMode === "signup") {
+      try { sessionStorage.setItem(PRIVACY_ACCEPT_KEY, JSON.stringify({ version: PRIVACY_POLICY_VERSION, at: new Date().toISOString() })); } catch {}
+    }
     authStatus("Google-Anmeldung wird geöffnet…", true);
     setAuthBusy(true);
     const redirectTo = `${location.origin}${location.pathname}`;

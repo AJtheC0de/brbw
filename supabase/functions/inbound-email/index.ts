@@ -106,6 +106,9 @@ function senderDomain(value: string) {
 function minimizeEmailText(value: string) {
   return value
     .replace(/data:[^\s;]+;base64,[a-z0-9+/=]+/gi, "[attachment removed]")
+    // Identifiers that are never needed for classification.
+    .replace(/\b756[.\s]?\d{4}[.\s]?\d{4}[.\s]?\d{2}\b/g, "[AHV removed]")
+    .replace(/\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}(?:\s?[A-Z0-9]{1,4})?\b/g, "[IBAN removed]")
     .replace(/https?:\/\/[^\s<>]+/gi, (url) => {
       try {
         const parsed = new URL(url);
@@ -130,7 +133,7 @@ function safeLog(event: string, fields: { code?: string; status?: number; reques
 
 function processingErrorCode(error: unknown) {
   const message = error instanceof Error ? error.message : "";
-  if (/^(resend_not_configured|openai_not_configured|openai_empty|inbound_quota_exceeded|inbound_quota_unavailable)$/.test(message)) return message;
+  if (/^(resend_not_configured|openai_not_configured|openai_empty|ai_consent_missing|inbound_quota_exceeded|inbound_quota_unavailable)$/.test(message)) return message;
   if (/^(resend_fetch|openai)_\d{3}$/.test(message)) return message;
   return "processing_failed";
 }
@@ -197,6 +200,12 @@ async function processInbound(admin: SupabaseClient, messageRowId: string, userI
     if (!resendKey) throw new Error("resend_not_configured");
     if (!openaiKey) throw new Error("openai_not_configured");
     const emailId = String(event.data?.email_id || "");
+
+    // Without AI consent the email content is neither fetched nor sent to OpenAI.
+    const { data: consent, error: consentError } = await admin.from("user_profiles")
+      .select("ai_processing_consent_at").eq("user_id", userId).maybeSingle();
+    if (consentError) throw consentError;
+    if (!consent?.ai_processing_consent_at) throw new Error("ai_consent_missing");
 
     // Reserve both the fixed burst and daily allowance atomically before any
     // provider content is fetched or OpenAI credit can be consumed.

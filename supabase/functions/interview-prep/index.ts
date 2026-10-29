@@ -121,6 +121,10 @@ Deno.serve(async (request) => {
     const body = await request.json().catch(() => ({}));
     const interviewId = typeof body.interviewId === "string" ? body.interviewId : "";
     if (!/^[0-9a-f-]{36}$/i.test(interviewId)) throw new HttpError(400, "Ungültiges Gespräch", "invalid_interview");
+    // Consent is checked before any personal data is read or sent to OpenAI.
+    const { data: profile } = await client.from("user_profiles")
+      .select("target_role,cv_path,cv_name,ai_processing_consent_at,ai_cv_consent_at").eq("user_id", userId).maybeSingle();
+    if (!profile?.ai_processing_consent_at) throw new HttpError(403, "KI-Verarbeitung ist nicht freigegeben", "ai_consent_required");
     const { data: interview, error: interviewError } = await client.from("interviews")
       .select("id,application_id,scheduled_at,stage,format,interviewer,notes")
       .eq("id", interviewId).eq("user_id", userId).single();
@@ -129,8 +133,6 @@ Deno.serve(async (request) => {
       .select("firma,stelle,job_url,job_description,location,employment_type,workload,work_model,notes")
       .eq("id", interview.application_id).eq("user_id", userId).single();
     if (applicationError || !application) throw new HttpError(404, "Bewerbung nicht gefunden", "not_found");
-    const { data: profile } = await client.from("user_profiles")
-      .select("target_role,cv_path,cv_name").eq("user_id", userId).maybeSingle();
     await reserveQuota(client);
 
     let importedJob: ImportedJob | null = null;
@@ -151,7 +153,7 @@ Deno.serve(async (request) => {
 
     const content: Record<string, unknown>[] = [];
     let usedCv = false;
-    if (profile?.cv_path) {
+    if (profile.cv_path && profile.ai_cv_consent_at) {
       const { data: file, error: fileError } = await client.storage.from("private-cvs").download(profile.cv_path);
       if (!fileError && file && file.size <= 10 * 1024 * 1024) {
         const bytes = new Uint8Array(await file.arrayBuffer());
