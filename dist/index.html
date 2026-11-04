@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="manifest" href="icons/site.webmanifest">
   <link rel="preload" href="fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=20261104-12">
+  <link rel="stylesheet" href="styles.css?v=20261104-13">
 </head>
 <body>
   <div class="bg-glow" aria-hidden="true"></div>
@@ -198,6 +198,7 @@
                 <button type="button" data-language="fr"><i></i><span><strong>Français</strong><small>Français</small></span></button>
                 <button type="button" data-language="es"><i></i><span><strong>Español</strong><small>Español</small></span></button>
                 <button type="button" data-language="sv"><i></i><span><strong>Svenska</strong><small>Svenska</small></span></button>
+                <button type="button" data-language="sq"><i></i><span><strong>Shqip</strong><small>Shqip</small></span></button>
               </div>
               <input id="onboardingLanguage" type="hidden" value="de">
               <p class="language-detection-note" data-i18n="languagePrivacy">Vorausgewählt anhand deiner Browsersprache – ohne Standort- oder IP-Abfrage.</p>
@@ -429,7 +430,7 @@
             <label class="field"><span>Zielrolle</span><input id="settingsRole" maxlength="120" placeholder="z.B. Product Designer"></label>
             <label class="field"><span>Aktueller Status</span><select id="settingsEmployment" class="select"><option value="">Keine Angabe</option><option value="employed">Angestellt</option><option value="unemployed">Arbeitssuchend</option><option value="student">In Ausbildung</option><option value="other">Etwas anderes</option></select></label>
             <label class="field"><span>Monatsziel</span><input id="settingsGoal" type="number" min="1" max="50" inputmode="numeric"></label>
-            <label class="field"><span data-i18n="languageSetting">Sprache</span><select id="settingsLanguage" class="select"><option value="de">Deutsch</option><option value="en">English</option><option value="fr">Français</option><option value="es">Español</option><option value="sv">Svenska</option></select><small class="field-help" data-i18n="languageSettingHint">Darstellung der App</small></label>
+            <label class="field"><span data-i18n="languageSetting">Sprache</span><select id="settingsLanguage" class="select"><option value="de">Deutsch</option><option value="en">English</option><option value="fr">Français</option><option value="es">Español</option><option value="sv">Svenska</option><option value="sq">Shqip</option></select><small class="field-help" data-i18n="languageSettingHint">Darstellung der App</small></label>
           </div>
           <div class="settings-form-foot"><span id="settingsAccountMessage" role="status"></span><button class="btn primary" id="saveAccountSettingsBtn" type="submit">Änderungen speichern</button></div>
         </form>
@@ -915,7 +916,7 @@
 
   <script src="vendor/supabase-2.102.0.min.js"
     integrity="sha384-1qxdq7qui0E5OGQx7KlSCCpPydLIt8lgUjqM3jGxWLXq9AIGC661VIvU/NPT6BQP"></script>
-  <script src="app.js?v=20261104-11"></script>
+  <script src="app.js?v=20261104-12"></script>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=jobplyTurnstileReady&amp;render=explicit" async defer></script>
 </body>
 </html>

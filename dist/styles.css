@@ -580,7 +580,6 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 .onboarding-options strong { font-size: 12px; }
 .onboarding-options small { color: #858c81; font-size: 10.5px; }
 .language-options { grid-template-columns: 1fr 1fr; }
-.language-options button:last-child { grid-column: 1 / -1; }
 .language-detection-note { margin: 13px 2px 0 !important; color: #858c81 !important; font-size: 10.5px !important; line-height: 1.45 !important; }
 .onboarding-goal { padding: 29px 26px 22px; border: 1px solid #dcddd8; border-radius: 15px; background: #fff; }
 .onboarding-goal output { display: flex; align-items: baseline; gap: 10px; margin-bottom: 27px; }
