@@ -1331,7 +1331,17 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 .job-fit-kicker { color: var(--fit-color); font-size: 9px; font-weight: 850; letter-spacing: .13em; text-transform: uppercase; }
 .job-fit-copy h4 { margin-top: 3px; color: var(--text); font-size: 15px; letter-spacing: -.015em; }
 .job-fit-copy p { margin: 4px 0 0; color: var(--text-2); font-size: 11px; line-height: 1.5; }
+.job-fit-upgrade {
+  margin-top: 8px; padding: 6px 10px; border: 0; border-radius: 9px; color: #fff; background: var(--fit-color);
+  font-size: 10px; font-weight: 800; box-shadow: 0 5px 12px color-mix(in srgb, var(--fit-color) 24%, transparent);
+}
+.job-fit-upgrade[hidden] { display: none; }
+.job-fit-upgrade:hover { filter: brightness(1.06); transform: translateY(-1px); }
+.job-fit-upgrade:active { transform: scale(.97); }
 .job-fit-card.no-score { --fit-color: #7b8190; border-style: dashed; }
+.job-fit-card.premium-locked { --fit-color: #b28426; border-style: solid; }
+.job-fit-card.premium-locked .job-fit-score strong { margin: 0; font-size: 17px; letter-spacing: .02em; }
+.job-fit-card.premium-locked .job-fit-score span { display: none; }
 .job-fit-card.no-score .job-fit-score { background: color-mix(in srgb, var(--fit-color) 12%, var(--bg-elev)); }
 @keyframes job-fit-reveal { from { opacity: 0; transform: translateY(8px) scale(.985); } }
 .magic-import.loading .magic-orb svg { animation: magic-spin 1.3s linear infinite; }

@@ -259,9 +259,18 @@ Deno.serve(async (request) => {
     if (internalRequest && !/^[0-9a-f-]{36}$/i.test(parentOperationId)) {
       throw new HttpError(400, "Interner Vorgang ist ungültig.", "invalid_parent_operation");
     }
+    if (!internalRequest) {
+      quotaAdmin = adminClient();
+      reservation = await reserveAiUsage(quotaAdmin, userId, "magic-import", {
+        request,
+        payload: { url },
+        estimatedUnits: 60_000,
+      });
+    }
+    const jobFitEligible = Boolean(reservation?.premium);
     const content: Record<string, unknown>[] = [];
     let usedCv = false;
-    if (!internalRequest && profile.cv_path && profile.ai_cv_consent_at) {
+    if (jobFitEligible && profile.cv_path && profile.ai_cv_consent_at) {
       const { data: file, error: fileError } = await client.storage.from("private-cvs").download(profile.cv_path);
       if (!fileError && file && file.size <= 10 * 1024 * 1024) {
         const bytes = new Uint8Array(await file.arrayBuffer());
@@ -276,16 +285,8 @@ Deno.serve(async (request) => {
     }
     content.push({
       type: "input_text",
-      text: JSON.stringify({ jobUrl: url, page, cvAvailable: usedCv }),
+      text: JSON.stringify({ jobUrl: url, page, cvAvailable: usedCv, jobFitEligible }),
     });
-    if (!internalRequest) {
-      quotaAdmin = adminClient();
-      reservation = await reserveAiUsage(quotaAdmin, userId, "magic-import", {
-        request,
-        payload: { url },
-        estimatedUnits: 60_000,
-      });
-    }
 
     if (quotaAdmin && reservation) await markAiDispatched(quotaAdmin, reservation);
     const aiResponse = await fetch("https://api.openai.com/v1/responses", {
@@ -327,6 +328,7 @@ Deno.serve(async (request) => {
       confidence: Math.max(0, Math.min(1, Number(extracted.confidence) || 0)),
       fitScore: usedCv ? Math.max(0, Math.min(10, Math.round(Number(extracted.fitScore) || 0))) : null,
       fitSummary: usedCv ? String(extracted.fitSummary || "").trim().slice(0, 360) : "",
+      jobFitEligible,
       usedCv,
       jobUrl: url,
       companyLogoUrl: page.logoUrl ? new URL(page.logoUrl, url).href : "",
@@ -334,7 +336,7 @@ Deno.serve(async (request) => {
       model,
     };
 
-    await writeAudit(audit, { user_id: userId, operation: "magic_import", status: "succeeded", metadata: { host: new URL(url).hostname, model, used_cv: usedCv, fit_score: result.fitScore } });
+    await writeAudit(audit, { user_id: userId, operation: "magic_import", status: "succeeded", metadata: { host: new URL(url).hostname, model, job_fit_eligible: jobFitEligible, used_cv: usedCv, fit_score: result.fitScore } });
     if (quotaAdmin) {
       await finishAiUsage(
         quotaAdmin,

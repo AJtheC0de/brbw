@@ -2038,7 +2038,20 @@
     }
 
     card.hidden = false;
-    card.classList.toggle("no-score", !metadata.usedCv);
+    const premiumActive = Boolean(billingState.premium);
+    const upgradeButton = $("#jobFitUpgrade");
+    card.classList.toggle("premium-locked", !premiumActive);
+    card.classList.toggle("no-score", premiumActive && !metadata.usedCv);
+    upgradeButton.hidden = premiumActive;
+    if (!premiumActive) {
+      card.removeAttribute("data-band");
+      card.style.setProperty("--fit-progress", "0deg");
+      $("#jobFitValue").textContent = "PRO";
+      $("#jobFitTitle").textContent = "Job-Fit ist ein Premium-Feature";
+      $("#jobFitSummary").textContent = "Mit Premium gleicht Jobply jede neue Stellenanzeige mit deinem freigegebenen Lebenslauf ab.";
+      scoreElement.setAttribute("aria-label", "CV Job-Fit ist mit Premium verfügbar");
+      return;
+    }
     if (!metadata.usedCv) {
       card.removeAttribute("data-band");
       card.style.setProperty("--fit-progress", "0deg");
@@ -2132,7 +2145,7 @@
         ...(state.draft.sourceMetadata || {}),
         magicImport: {
           source: result.source, model: result.model, confidence: result.confidence,
-          usedCv: Boolean(result.usedCv), fitScore: result.fitScore,
+          jobFitEligible: Boolean(result.jobFitEligible), usedCv: Boolean(result.usedCv), fitScore: result.fitScore,
           fitSummary: String(result.fitSummary || "").slice(0, 360),
           importedAt: new Date().toISOString(),
         },
@@ -3034,6 +3047,7 @@
     $("#startCheckoutBtn").hidden = billingState.premium;
     $("#openBillingPortalBtn").hidden = !billingState.hasCustomer;
     updatePremiumNavbar();
+    if (state.draft) renderJobFit();
   }
 
   function applyBillingUsage(usage) {
@@ -3482,6 +3496,7 @@
   $("#privacyBtn").addEventListener("click", togglePrivacyMode);
   $("#settingsBtn").addEventListener("click", openSettings);
   $("#openBillingBtn").addEventListener("click", () => openBillingModal());
+  $("#jobFitUpgrade").addEventListener("click", () => openBillingModal("Der CV Job-Fit ist exklusiv in Premium enthalten."));
   $("#billingCloseBtn").addEventListener("click", closeBillingModal);
   $("#billingSuccessBtn").addEventListener("click", closeBillingModal);
   $("#billingOverlay").addEventListener("click", closeBillingModal);
