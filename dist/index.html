@@ -9,12 +9,21 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="manifest" href="icons/site.webmanifest">
   <link rel="preload" href="fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=20261029-1">
+  <link rel="stylesheet" href="styles.css?v=20261104-5">
 </head>
 <body>
   <div class="bg-glow" aria-hidden="true"></div>
 
-  <main class="auth-shell" id="authShell">
+  <div class="app-boot" id="appBoot" role="status" aria-live="polite">
+    <div class="app-boot-brand">
+      <img class="brand-icon" src="brand/jobply-icon-colourful.png" alt="" width="44" height="44">
+      <img class="brand-wordmark" src="brand/jobply-wordmark-black.png" alt="Jobply">
+    </div>
+    <span class="app-boot-spinner" aria-hidden="true"></span>
+    <p>Sitzung wird geprüft …</p>
+  </div>
+
+  <main class="auth-shell" id="authShell" hidden>
     <div class="auth-orb auth-orb-one" aria-hidden="true"></div>
     <div class="auth-orb auth-orb-two" aria-hidden="true"></div>
 
@@ -87,11 +96,24 @@
             <span>Passwort</span>
             <span class="auth-input">
               <svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-              <input id="authPassword" type="password" autocomplete="current-password" minlength="10" required placeholder="Mindestens 10 Zeichen">
+              <input id="authPassword" type="password" autocomplete="current-password" minlength="12" required placeholder="Dein Passwort" aria-describedby="passwordStrengthText">
               <button class="auth-password-toggle" id="authPasswordToggle" type="button" aria-label="Passwort anzeigen">
                 <svg class="eye-open" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>
                 <svg class="eye-closed" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 6.1A9.7 9.7 0 0 1 12 6c6 0 9.5 6 9.5 6a16 16 0 0 1-2.2 3M6.2 6.2C3.8 7.8 2.5 12 2.5 12s3.5 6 9.5 6a9 9 0 0 0 3-.5"/></svg>
               </button>
+            </span>
+          </label>
+
+          <div class="password-strength" id="passwordStrength" hidden aria-live="polite">
+            <div class="password-strength-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <span id="passwordStrengthText">Mind. 12 Zeichen mit Gross-/Kleinbuchstaben, Zahl und Sonderzeichen</span>
+          </div>
+
+          <label class="auth-field" id="authPasswordConfirmField" hidden>
+            <span>Passwort wiederholen</span>
+            <span class="auth-input">
+              <svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><path d="M12 3l7 3v5c0 4.7-2.8 8-7 10-4.2-2-7-5.3-7-10V6l7-3Z"/></svg>
+              <input id="authPasswordConfirm" type="password" autocomplete="new-password" minlength="12" placeholder="Passwort erneut eingeben">
             </span>
           </label>
 
@@ -100,31 +122,33 @@
             <span>Ich habe die <a href="datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung</a> zur Kenntnis genommen.</span>
           </label>
 
+          <div class="auth-turnstile" id="authTurnstile" aria-label="Bot-Schutz"></div>
+
           <p class="auth-message" id="authMessage" role="status"></p>
           <button class="auth-primary" id="authSubmit" type="submit">
+            <i class="auth-spinner" aria-hidden="true"></i>
             <span>Anmelden</span>
             <svg viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></svg>
           </button>
         </form>
 
-        <div class="auth-divider"><span>oder weiter mit</span></div>
-
-        <button class="auth-google" id="googleAuthBtn" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path fill="#4285F4" stroke="none" d="M21.6 12.2c0-.7-.1-1.5-.2-2.2H12v4.3h5.4a4.6 4.6 0 0 1-2 3v2.8h3.3c1.9-1.8 2.9-4.4 2.9-7.9Z"/>
-            <path fill="#34A853" stroke="none" d="M12 22c2.7 0 5-.9 6.7-2.4l-3.3-2.8c-.9.6-2.1 1-3.4 1a5.9 5.9 0 0 1-5.5-4.1H3.1v2.9A10 10 0 0 0 12 22Z"/>
-            <path fill="#FBBC05" stroke="none" d="M6.5 13.7a6 6 0 0 1 0-3.8V7H3.1a10 10 0 0 0 0 9.6l3.4-2.9Z"/>
-            <path fill="#EA4335" stroke="none" d="M12 5.8c1.5 0 2.8.5 3.9 1.5l2.9-2.9A9.8 9.8 0 0 0 3.1 7l3.4 2.9A5.9 5.9 0 0 1 12 5.8Z"/>
-          </svg>
-          <span>Mit Google anmelden</span>
-        </button>
-
         <p class="auth-terms" id="authTerms">Es gilt unsere Datenschutzerklärung.</p>
-        <p class="auth-legal"><a href="datenschutz.html" target="_blank" rel="noopener">Datenschutz</a><span aria-hidden="true">·</span><a href="impressum.html" target="_blank" rel="noopener">Impressum</a></p>
         <p class="auth-privacy"><span></span> Deine Bewerbungsdaten bleiben privat und gehören nur dir.</p>
       </section>
     </div>
   </main>
+
+  <div class="auth-confirm-overlay" id="authConfirmOverlay" hidden></div>
+  <section class="auth-confirm-dialog" id="authConfirmDialog" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="authConfirmTitle" hidden>
+    <div class="auth-confirm-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 7 8 6 8-6"/><path d="m16 17 2 2 4-4"/></svg>
+    </div>
+    <span class="auth-confirm-kicker">Fast geschafft</span>
+    <h2 id="authConfirmTitle">Prüfe deine E-Mails</h2>
+    <p>Wir haben einen Bestätigungslink an <strong id="authConfirmEmail"></strong> gesendet. Öffne den Link, um dein Konto zu aktivieren.</p>
+    <button class="auth-primary" id="authConfirmClose" type="button"><span>Verstanden</span></button>
+    <small>Keine E-Mail? Prüfe bitte auch deinen Spam-Ordner.</small>
+  </section>
 
   <main class="onboarding-shell" id="onboardingShell" hidden>
     <div class="onboarding-frame">
@@ -133,7 +157,14 @@
           <img class="brand-icon" src="brand/jobply-icon-colourful.png" alt="" width="36" height="36">
           <img class="brand-wordmark" src="brand/jobply-wordmark-black.png" alt="jobply">
         </div>
-        <button class="onboarding-skip" id="onboardingSkip" type="button">Vorerst überspringen</button>
+        <div class="onboarding-header-actions">
+          <button class="onboarding-skip" id="onboardingSkip" type="button" aria-label="Onboarding vorerst überspringen">Später</button>
+          <span aria-hidden="true"></span>
+          <button class="onboarding-signout" id="onboardingSignout" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4M14 8l4 4-4 4m4-4H9"/></svg>
+            <span>Abmelden</span>
+          </button>
+        </div>
       </header>
 
       <div class="onboarding-layout">
@@ -141,6 +172,7 @@
           <span class="onboarding-eyebrow">Dein Setup</span>
           <h1>Damit Jobply zu deinem Leben passt.</h1>
           <p>Vier kurze Schritte helfen uns, Jobply persönlicher für dich zu machen.</p>
+          <div class="onboarding-progress-track" aria-hidden="true"><span id="onboardingProgressBar"></span></div>
           <ol class="onboarding-steps" aria-label="Fortschritt">
             <li class="active" data-onboarding-indicator="0"><i>1</i><span>Über dich</span></li>
             <li data-onboarding-indicator="1"><i>2</i><span>Deine Situation</span></li>
@@ -186,7 +218,7 @@
               <h2>Wie viele Bewerbungen möchtest du versenden?</h2>
               <p>Ein realistisches Monatsziel hilft dir, Fortschritt sichtbar zu machen.</p>
               <div class="onboarding-goal">
-                <output id="onboardingGoalOutput" for="onboardingGoal"><strong>10</strong><span>Bewerbungen pro Monat</span></output>
+                <output id="onboardingGoalOutput" for="onboardingGoal" aria-live="polite"><strong>10</strong><span>Bewerbungen pro Monat</span></output>
                 <input id="onboardingGoal" type="range" min="1" max="50" step="1" value="10" aria-label="Bewerbungen pro Monat">
                 <div><span>1</span><span>50</span></div>
               </div>
@@ -234,6 +266,7 @@
       <button class="nav-brand" id="homeBtn" type="button" aria-label="Zum Bewerbungs-Dashboard">
         <img class="brand-icon" src="brand/jobply-icon-colourful.png" alt="" width="40" height="40">
         <img class="brand-wordmark" src="brand/jobply-wordmark-black.png" alt="jobply">
+        <span class="nav-premium-badge" id="navPremiumBadge" hidden>Premium</span>
       </button>
 
       <div class="nav-actions">
@@ -366,6 +399,11 @@
     </div>
 
     <div class="settings-body">
+      <button type="button" class="premium-settings-card" id="openBillingBtn">
+        <span class="premium-icon"><svg viewBox="0 0 24 24"><path d="M12 3l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8L12 3Z"/></svg></span>
+        <span><small id="billingPlanTag">3 GRATIS-KI-NUTZUNGEN</small><strong>Jobply Premium</strong><em id="billingPlanSummary">Nutzungsstand wird geladen…</em></span>
+        <svg class="premium-arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
       <section class="settings-section">
         <div class="settings-section-title"><span>Account-Einstellungen</span><small>Persönliche Angaben</small></div>
         <form class="settings-form" id="accountSettingsForm">
@@ -400,7 +438,7 @@
         <div class="settings-consent-list">
           <label class="settings-consent">
             <input id="aiConsentInput" type="checkbox">
-            <span><strong>KI-Funktionen erlauben</strong><small>Für Interviewvorbereitung und E-Mail-Auswertung werden die dafür nötigen Inhalte an OpenAI übermittelt (ohne Speicherung als Trainingsdaten). Jederzeit widerrufbar.</small></span>
+            <span><strong>KI-Funktionen erlauben</strong><small>Die nötigen Inhalte gehen an OpenAI. Keine Nutzung zum Modelltraining; Aufbewahrung zur Missbrauchserkennung bis zu 30 Tage. Jederzeit widerrufbar.</small></span>
           </label>
           <label class="settings-consent">
             <input id="aiCvConsentInput" type="checkbox">
@@ -408,7 +446,7 @@
           </label>
           <span class="settings-consent-message" id="consentMessage" role="status"></span>
         </div>
-        <p class="settings-legal"><a href="datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung</a><span aria-hidden="true">·</span><a href="impressum.html" target="_blank" rel="noopener">Impressum</a></p>
+        <p class="settings-legal"><a href="datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung</a><span aria-hidden="true">·</span><a href="nutzungsbedingungen.html" target="_blank" rel="noopener">Nutzungsbedingungen</a><span aria-hidden="true">·</span><a href="impressum.html" target="_blank" rel="noopener">Impressum</a></p>
       </section>
 
       <section class="settings-section">
@@ -428,6 +466,42 @@
       </section>
     </div>
   </aside>
+  <div class="billing-overlay" id="billingOverlay" hidden></div>
+  <section class="billing-modal" id="billingModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="billingTitle" hidden>
+    <div class="billing-confetti" id="billingConfetti" aria-hidden="true"></div>
+    <header>
+      <div><span>JOBPLY PREMIUM</span><h2 id="billingTitle">Mehr KI mit Premium</h2></div>
+      <button type="button" class="icon-btn" id="billingCloseBtn" aria-label="Premium-Fenster schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </header>
+    <div class="billing-content">
+      <p id="billingUsageText">Jeder bestätigte Account erhält drei erfolgreiche KI-Nutzungen kostenlos.</p>
+      <ul><li>Magic Import</li><li>Interviewvorbereitung</li><li>KI-Auswertung der E-Mail-Inbox</li></ul>
+      <div class="billing-price-picker" id="billingPricePicker" aria-label="Regionaler Monatspreis">
+        <div class="billing-price-option"><strong id="billingPriceAmount">CHF 6</strong><span>pro Monat</span><small id="billingRegionNote">Preis für die Schweiz</small></div>
+      </div>
+      <p class="billing-renewal">Das Abo verlängert sich monatlich und kann jederzeit zum Ende der laufenden Abrechnungsperiode gekündigt werden.</p>
+      <p class="billing-renewal">Premium entfernt das 3-Nutzungen-Limit. Technische Schutz- und Fair-Use-Limits bleiben bestehen.</p>
+      <label class="billing-terms" id="billingTermsWrap"><input type="checkbox" id="billingTermsInput"><span>Ich akzeptiere die <a href="nutzungsbedingungen.html" target="_blank" rel="noopener">Nutzungsbedingungen</a> und habe die <a href="datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung</a> gelesen.</span></label>
+      <button type="button" class="btn primary billing-submit" id="startCheckoutBtn" disabled>Premium mit CHF 6/Monat wählen</button>
+      <button type="button" class="btn ghost billing-submit" id="openBillingPortalBtn" hidden>Abo verwalten oder kündigen</button>
+      <span class="billing-message" id="billingMessage" role="status"></span>
+      <small class="billing-provider">Sichere Zahlungsabwicklung über Stripe. Jobply speichert keine vollständigen Kartendaten.</small>
+    </div>
+    <div class="billing-success-content" id="billingSuccessContent" hidden>
+      <div class="billing-success-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="m5 9 3 3 4-7 4 7 3-3-1.4 9H6.4L5 9Z"/><path d="M7 21h10"/></svg>
+      </div>
+      <span class="billing-success-kicker">DU BIST DABEI</span>
+      <h3 id="billingSuccessTitle">Willkommen bei Jobply Premium!</h3>
+      <p id="billingSuccessMessage">Deine Zahlung war erfolgreich. Premium wird gerade aktiviert…</p>
+      <div class="billing-success-perks">
+        <span>✓ KI ohne 3-Nutzungen-Limit</span>
+        <span>✓ Magic Import & Interviewvorbereitung</span>
+        <span>✓ Monatlich kündbar</span>
+      </div>
+      <button type="button" class="btn primary billing-success-button" id="billingSuccessBtn">Loslegen</button>
+    </div>
+  </section>
   <div class="tip" id="tip" role="tooltip" hidden></div>
 
   <!-- Drawer -->
@@ -765,11 +839,20 @@
     </div>
   </section>
 
+  <footer class="site-legal-footer" aria-label="Rechtliche Informationen">
+    <a href="datenschutz.html">Datenschutz</a>
+    <span aria-hidden="true">·</span>
+    <a href="nutzungsbedingungen.html">Nutzungsbedingungen</a>
+    <span aria-hidden="true">·</span>
+    <a href="impressum.html">Impressum</a>
+  </footer>
+
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <input type="file" id="fileInput" accept=".csv,.json,text/csv,application/json" hidden>
 
   <script src="vendor/supabase-2.102.0.min.js"
     integrity="sha384-1qxdq7qui0E5OGQx7KlSCCpPydLIt8lgUjqM3jGxWLXq9AIGC661VIvU/NPT6BQP"></script>
-  <script src="app.js?v=20261029-1"></script>
+  <script src="app.js?v=20261104-3"></script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=jobplyTurnstileReady&amp;render=explicit" async defer></script>
 </body>
 </html>

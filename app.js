@@ -10,14 +10,39 @@
   const PRIVACY_KEY = "bwrb.privacyMode";
   const MONTH_LAYOUT_KEY = "bwrb.monthLayout";
   const ONBOARDING_RELEASE_AT = Date.parse("2026-10-22T23:20:00.000Z");
-  const PRIVACY_POLICY_VERSION = "2026-10-29";
-  const PRIVACY_ACCEPT_KEY = "jobply_privacy_accepted";
-  const MIN_SIGNUP_PASSWORD = 10;
+  const PRIVACY_POLICY_VERSION = "2026-10-29-2";
+  const MIN_SIGNUP_PASSWORD = 12;
   const SUPABASE_URL = "https://coxmnerqoaclawbbgipx.supabase.co";
   const SUPABASE_KEY = "sb_publishable_2oKHLoM5fCrNiQ1FCpvPig_0Ci3zISR";
+  const API_GATEWAY_URL = "https://api.jobply.app";
+  const TURNSTILE_SITE_KEY = "0x4AAAAAAFrkmnNv3j3ctvVE";
+  const EDGE_FUNCTION_ROUTES = new Map([
+    ["interview-prep", "/v1/interview-prep"],
+    ["magic-import", "/v1/magic-import"],
+    ["inbound-settings", "/v1/inbound-settings"],
+    ["billing-checkout", "/v1/billing-checkout"],
+    ["billing-status", "/v1/billing-status"],
+    ["billing-portal", "/v1/billing-portal"],
+    ["delete-account", "/v1/delete-account"],
+    ["foundation-health", "/v1/foundation-health"],
+  ]);
+  const gatewayFetch = (input, init) => {
+    const originalUrl = typeof input === "string" ? input : input?.url;
+    if (originalUrl) {
+      const url = new URL(originalUrl, location.href);
+      const prefix = "/functions/v1/";
+      if (url.origin === SUPABASE_URL && url.pathname.startsWith(prefix)) {
+        const functionName = decodeURIComponent(url.pathname.slice(prefix.length));
+        const route = EDGE_FUNCTION_ROUTES.get(functionName);
+        if (route) return window.fetch(`${API_GATEWAY_URL}${route}${url.search}`, init);
+      }
+    }
+    return window.fetch(input, init);
+  };
   clearLegacyApplicationStorage();
   const db = window.supabase?.createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    global: { fetch: gatewayFetch },
   });
   let currentUser = null;
   let userProfile = null;
@@ -31,6 +56,17 @@
   const AI_BRIEF_INTERVAL = 5200;
   let aiBriefTimer = null;
   let aiBriefIndex = 0;
+  let billingState = { premium: false, used: 0, remaining: 3, status: "inactive", hasCustomer: false };
+  function detectBillingCurrency() {
+    let region = "";
+    try { region = new Intl.Locale(navigator.languages?.[0] || navigator.language || "").region || ""; } catch {}
+    let timeZone = "";
+    try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch {}
+    if (region === "CH" || region === "LI" || timeZone === "Europe/Zurich" || timeZone === "Europe/Vaduz") return "chf";
+    return "eur";
+  }
+
+  let billingCurrency = detectBillingCurrency();
 
   // Ergebnis (outcome) – how it ended / where it stands
   const STATUSES = [
@@ -89,11 +125,15 @@
   };
 
   const MAGIC_IMPORT_ERRORS = {
+    ai_consent_required: "Bitte erlaube KI-Funktionen zuerst unter Datenschutz & KI.",
     host_not_allowed: "Diese Jobplattform wird noch nicht unterstützt.",
     invalid_url: "Bitte füge einen gültigen Job-Link ein.",
     private_url: "Private Netzwerkadressen sind nicht erlaubt.",
     unresolvable_url: "Die Jobseite ist nicht öffentlich erreichbar.",
     rate_limited: "Zu viele Importe. Bitte versuche es später erneut.",
+    ai_operation_in_progress: "Eine andere KI-Verarbeitung läuft bereits. Bitte kurz warten.",
+    email_not_verified: "Bitte bestätige zuerst deine E-Mail-Adresse.",
+    ai_quota_exceeded: "Deine drei kostenlosen KI-Nutzungen sind aufgebraucht.",
     upstream_failed: "Die Jobseite konnte nicht geladen werden.",
     not_html: "Der Link zeigt nicht auf eine Webseite.",
     upstream_too_large: "Die Jobseite ist zu gross.",
@@ -119,6 +159,27 @@
   const $$ = (sel, root = document) => root.querySelectorAll(sel);
   const uid = () => globalThis.crypto?.randomUUID?.()
     || Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  const pendingOperationKey = (scope) => {
+    const storageKey = `jobply.pending.${scope}`;
+    let key = "";
+    try { key = sessionStorage.getItem(storageKey) || ""; } catch {}
+    if (!key) {
+      key = globalThis.crypto?.randomUUID?.() || `${uid()}-${Date.now().toString(36)}-${uid()}`;
+      try { sessionStorage.setItem(storageKey, key); } catch {}
+    }
+    return { key, storageKey };
+  };
+  const completeOperation = (storageKey) => {
+    try { sessionStorage.removeItem(storageKey); } catch {}
+  };
+  const DEFINITIVE_OPERATION_ERRORS = new Set([
+    "ai_quota_exceeded", "ai_rate_limited", "ai_temporarily_disabled",
+    "ai_consent_required", "ai_failed", "operation_already_processed",
+    "idempotency_conflict", "session_revoked", "account_blocked", "email_not_verified",
+    "ai_operation_in_progress",
+    "already_premium", "subscription_requires_portal", "service_disabled",
+    "service_budget_exhausted", "billing_not_configured",
+  ]);
   const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
   const safeId = (value) => SAFE_ID.test(String(value ?? "")) ? String(value) : uid();
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -1748,13 +1809,30 @@
     if (!await ensureAiConsent()) return;
     const button = $(`[data-interview-id="${CSS.escape(interview.id)}"] [data-interview-prep]`);
     if (button) { button.disabled = true; button.textContent = "KI bereitet vor…"; }
+    const operation = pendingOperationKey(`interview-prep.${interview.id}`);
     try {
-      const { data, error } = await db.functions.invoke("interview-prep", { body: { interviewId: interview.id } });
-      if (error || !data?.ok) throw new Error(data?.error || "prep_failed");
+      const { data, error } = await db.functions.invoke("interview-prep", {
+        body: { interviewId: interview.id },
+        headers: { "x-idempotency-key": operation.key },
+      });
+      const code = await functionErrorCode(error, data);
+      if (code === "ai_quota_exceeded") {
+        completeOperation(operation.storageKey);
+        if (button) { button.disabled = false; button.textContent = "KI-Vorbereitung"; }
+        openBillingModal("Deine drei kostenlosen KI-Nutzungen sind aufgebraucht.");
+        return;
+      }
+      if (error || !data?.ok) throw new Error(code || "prep_failed");
+      completeOperation(operation.storageKey);
       interview.ai_prep = data.prep; interview.ai_prepared_at = data.preparedAt; interview._expanded = true;
+      applyBillingUsage(data.usage);
       renderInterviews();
       toast(data.enrichedFromUrl ? "Inserat gelesen und Vorbereitung neu erstellt" : data.usedCv ? "Persönliche Vorbereitung erstellt" : userProfile?.cv_path ? "Vorbereitung ohne CV erstellt – CV-Freigabe unter Einstellungen" : "Vorbereitung ohne CV erstellt");
-    } catch { toast("KI-Vorbereitung konnte nicht erstellt werden"); if (button) { button.disabled = false; button.textContent = "KI-Vorbereitung"; } }
+    } catch (error) {
+      if (DEFINITIVE_OPERATION_ERRORS.has(error?.message)) completeOperation(operation.storageKey);
+      toast("KI-Vorbereitung konnte nicht erstellt werden");
+      if (button) { button.disabled = false; button.textContent = "KI-Vorbereitung"; }
+    }
   }
 
   async function deleteInterview(interview) {
@@ -1928,12 +2006,18 @@
     catch { return ""; }
   }
 
+  async function functionErrorCode(error, data = null) {
+    if (data?.error) return String(data.error);
+    try { return String((await error?.context?.json?.())?.error || ""); } catch { return ""; }
+  }
+
   async function runMagicImport() {
     if (!state.draft || runMagicImportBtn.disabled) return;
     const expectedEpoch = authEpoch;
     const expectedUserId = currentUser?.id;
     const expectedDraft = state.draft;
     if (!expectedUserId) return;
+    if (!await ensureAiConsent()) return;
     const url = normalizedWebUrl(jobImportUrl.value);
     if (!url) {
       setMagicStatus("Bitte füge einen gültigen Job-Link ein.", "error");
@@ -1944,21 +2028,27 @@
     runMagicImportBtn.disabled = true;
     $("#pasteJobUrlBtn").disabled = true;
     setMagicStatus("Stellenanzeige wird gelesen und mit OpenAI ausgewertet …", "loading");
+    const operation = pendingOperationKey(`magic-import.${currentUser.id}`);
     try {
-      const { data, error } = await db.functions.invoke("magic-import", { body: { url } });
+      const { data, error } = await db.functions.invoke("magic-import", {
+        body: { url },
+        headers: { "x-idempotency-key": operation.key },
+      });
       if (!isActiveAuthContext(expectedEpoch, expectedUserId) || state.draft !== expectedDraft) return;
       if (error) {
-        let code = "";
-        try { code = String((await error.context?.json?.())?.error || ""); } catch {}
+        const code = await functionErrorCode(error, data);
         const failure = new Error("magic_import_failed");
         failure.publicMessage = MAGIC_IMPORT_ERRORS[code] || "";
+        failure.code = code;
         throw failure;
       }
       if (!data?.ok || !data.data) {
         const failure = new Error("magic_import_failed");
         failure.publicMessage = MAGIC_IMPORT_ERRORS[data?.error] || "";
+        failure.code = data?.error || "";
         throw failure;
       }
+      completeOperation(operation.storageKey);
       const result = data.data;
       const values = {
         firma: result.company, stelle: result.role, location: result.location,
@@ -1985,9 +2075,12 @@
       renderLinks();
       renderEmailComposer(!emailTextCustomized);
       const confidence = Math.round((Number(result.confidence) || 0) * 100);
+      applyBillingUsage(data.usage);
       setMagicStatus(`${filled} Felder übernommen${confidence ? ` · ${confidence}% Erkennungssicherheit` : ""}. Bitte kurz prüfen.`, "success");
     } catch (error) {
       if (!isActiveAuthContext(expectedEpoch, expectedUserId) || state.draft !== expectedDraft) return;
+      if (DEFINITIVE_OPERATION_ERRORS.has(error.code)) completeOperation(operation.storageKey);
+      if (error.code === "ai_quota_exceeded") openBillingModal(error.publicMessage);
       setMagicStatus(error.publicMessage || "Magic Import ist gerade nicht verfügbar.", "error");
     } finally {
       if (!isActiveAuthContext(expectedEpoch, expectedUserId) || state.draft !== expectedDraft) return;
@@ -2802,6 +2895,219 @@
   const settingsPanel = $("#settingsPanel"), settingsOverlay = $("#settingsOverlay");
   const deleteAccountConfirm = $("#deleteAccountConfirm"), deleteAccountInput = $("#deleteAccountInput");
   let settingsOpen = false;
+  let billingActivationRun = 0;
+  let premiumBrandTimer = null;
+
+  function normalizeBillingStatus(row = {}) {
+    return {
+      premium: Boolean(row.is_premium ?? row.premium),
+      used: Math.max(0, Number(row.used) || 0),
+      remaining: row.remaining == null ? null : Math.max(0, Number(row.remaining) || 0),
+      status: String(row.subscription_status || row.status || "inactive"),
+      currency: row.currency === "eur" ? "eur" : row.currency === "chf" ? "chf" : null,
+      periodEnd: row.current_period_end || null,
+      cancelAtPeriodEnd: Boolean(row.cancel_at_period_end),
+      hasCustomer: Boolean(row.has_stripe_customer ?? row.hasCustomer),
+    };
+  }
+
+  function updatePremiumNavbar() {
+    const navbar = $("#appNavbar"), badge = $("#navPremiumBadge");
+    const premium = Boolean(billingState.premium);
+    badge.hidden = !premium;
+    navbar.classList.toggle("premium-member", premium);
+    if (!premium) {
+      if (premiumBrandTimer) clearTimeout(premiumBrandTimer);
+      premiumBrandTimer = null;
+      navbar.classList.remove("premium-logo-gold");
+      return;
+    }
+    if (navbar.classList.contains("premium-logo-gold") || premiumBrandTimer || $("#mainApp").hidden) return;
+    premiumBrandTimer = setTimeout(() => {
+      premiumBrandTimer = null;
+      if (billingState.premium && currentUser?.id && !$("#mainApp").hidden) navbar.classList.add("premium-logo-gold");
+    }, 5000);
+  }
+
+  function renderBillingState() {
+    const tag = $("#billingPlanTag"), summary = $("#billingPlanSummary"), usage = $("#billingUsageText");
+    const premiumCard = $("#openBillingBtn");
+    premiumCard.classList.toggle("is-premium", billingState.premium);
+    premiumCard.classList.toggle("is-ending", billingState.premium && billingState.cancelAtPeriodEnd);
+    if (billingState.premium) {
+      $("#billingTitle").textContent = "Dein Premium-Abo";
+      const end = billingState.periodEnd ? new Date(billingState.periodEnd).toLocaleDateString("de-CH") : "";
+      tag.textContent = billingState.cancelAtPeriodEnd ? "PREMIUM · GEKÜNDIGT" : "PREMIUM AKTIV";
+      summary.textContent = billingState.cancelAtPeriodEnd
+        ? (end ? `Aktiv bis ${end} · keine Verlängerung` : "Kündigung zum Periodenende vorgemerkt")
+        : (end ? `Nächste Verlängerung am ${end}` : "KI ohne 3-Nutzungen-Limit");
+      usage.textContent = billingState.cancelAtPeriodEnd && end
+        ? `Premium bleibt bis ${end} aktiv.`
+        : end
+          ? `Premium ist aktiv und verlängert sich am ${end}. Technische Schutz- und Fair-Use-Limits bleiben bestehen.`
+          : "Premium ist aktiv. Technische Schutz- und Fair-Use-Limits bleiben bestehen.";
+    } else {
+      $("#billingTitle").textContent = "Mehr KI mit Premium";
+      const remaining = billingState.remaining == null ? Math.max(0, 3 - billingState.used) : billingState.remaining;
+      tag.textContent = `${remaining} GRATIS-KI-${remaining === 1 ? "NUTZUNG" : "NUTZUNGEN"}`;
+      summary.textContent = remaining ? `${billingState.used} von 3 kostenlosen Nutzungen verbraucht` : "Gratisnutzungen aufgebraucht";
+      usage.textContent = remaining
+        ? `Noch ${remaining} von drei erfolgreichen KI-Nutzungen kostenlos.`
+        : "Deine drei kostenlosen KI-Nutzungen sind aufgebraucht.";
+    }
+    $("#billingPricePicker").hidden = billingState.premium;
+    $("#billingTermsWrap").hidden = billingState.premium;
+    $("#startCheckoutBtn").hidden = billingState.premium;
+    $("#openBillingPortalBtn").hidden = !billingState.hasCustomer;
+    updatePremiumNavbar();
+  }
+
+  function applyBillingUsage(usage) {
+    if (!usage) return;
+    billingState = { ...billingState, premium: Boolean(usage.premium), remaining: usage.remaining ?? null };
+    if (!billingState.premium && billingState.remaining != null) billingState.used = Math.max(0, 3 - billingState.remaining);
+    renderBillingState();
+  }
+
+  async function refreshBillingStatus() {
+    if (!currentUser?.id) return false;
+    try {
+      const { data, error } = await db.functions.invoke("billing-status", { body: {} });
+      if (error || !data?.ok) throw new Error("billing_status_failed");
+      billingState = normalizeBillingStatus(data.data);
+      renderBillingState();
+      renderCheckoutButton();
+      return true;
+    } catch {
+      $("#billingPlanSummary").textContent = "Nutzungsstand derzeit nicht verfügbar";
+      return false;
+    }
+  }
+
+  function setBillingModalMode(success) {
+    const modal = $("#billingModal");
+    modal.classList.toggle("success", success);
+    modal.setAttribute("aria-labelledby", success ? "billingSuccessTitle" : "billingTitle");
+    modal.querySelector("header").hidden = success;
+    modal.querySelector(".billing-content").hidden = success;
+    $("#billingSuccessContent").hidden = !success;
+  }
+
+  function revealBillingModal() {
+    $("#billingOverlay").hidden = false;
+    $("#billingModal").hidden = false;
+    $("#billingModal").setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    requestAnimationFrame(() => { $("#billingOverlay").classList.add("show"); $("#billingModal").classList.add("show"); });
+  }
+
+  function launchPremiumConfetti() {
+    const stage = $("#billingConfetti");
+    stage.replaceChildren();
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const colors = ["#6366f1", "#8b5cf6", "#ec4899", "#f59e0b", "#22c55e", "#38bdf8"];
+    for (let index = 0; index < 72; index++) {
+      const piece = document.createElement("i");
+      piece.style.setProperty("--left", `${Math.random() * 100}%`);
+      piece.style.setProperty("--size", `${5 + Math.random() * 6}px`);
+      piece.style.setProperty("--color", colors[index % colors.length]);
+      piece.style.setProperty("--duration", `${2.5 + Math.random() * 1.7}s`);
+      piece.style.setProperty("--delay", `${Math.random() * .65}s`);
+      piece.style.setProperty("--drift", `${-95 + Math.random() * 190}px`);
+      piece.style.setProperty("--rotation", `${360 + Math.random() * 720}deg`);
+      stage.appendChild(piece);
+    }
+    setTimeout(() => stage.replaceChildren(), 4800);
+  }
+
+  async function openBillingSuccess() {
+    closeSettings();
+    const run = ++billingActivationRun;
+    setBillingModalMode(true);
+    $("#billingSuccessMessage").textContent = "Deine Zahlung war erfolgreich. Premium wird gerade aktiviert…";
+    revealBillingModal();
+    launchPremiumConfetti();
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+      if (run !== billingActivationRun) return;
+      await refreshBillingStatus();
+      if (billingState.premium) {
+        const end = billingState.periodEnd ? new Date(billingState.periodEnd).toLocaleDateString("de-CH") : "";
+        $("#billingSuccessMessage").textContent = end
+          ? `Premium ist aktiv. Deine aktuelle Abrechnungsperiode läuft bis ${end}.`
+          : "Premium ist jetzt aktiv. Viel Erfolg mit deinen KI-Funktionen!";
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 800 + attempt * 250));
+    }
+    if (run === billingActivationRun) {
+      $("#billingSuccessMessage").textContent = "Die Zahlung ist bestätigt. Stripe aktiviert Premium noch im Hintergrund – das geschieht normalerweise in wenigen Sekunden.";
+    }
+  }
+
+  function openBillingModal(message = "") {
+    billingActivationRun++;
+    closeSettings();
+    setBillingModalMode(false);
+    $("#billingMessage").textContent = message;
+    $("#billingTermsInput").checked = false;
+    renderBillingState();
+    renderCheckoutButton();
+    revealBillingModal();
+    void refreshBillingStatus();
+  }
+
+  function closeBillingModal() {
+    billingActivationRun++;
+    $("#billingConfetti").replaceChildren();
+    $("#billingOverlay").classList.remove("show");
+    $("#billingModal").classList.remove("show");
+    $("#billingModal").setAttribute("aria-hidden", "true");
+    document.body.style.overflow = drawer.classList.contains("open") ? "hidden" : "";
+    setTimeout(() => { if (!$("#billingModal").classList.contains("show")) { $("#billingOverlay").hidden = true; $("#billingModal").hidden = true; } }, 250);
+  }
+
+  function renderCheckoutButton() {
+    const isEuro = billingCurrency === "eur";
+    $("#billingPriceAmount").textContent = `${isEuro ? "€" : "CHF"} 6`;
+    $("#billingRegionNote").textContent = isEuro ? "Preis für den Euroraum" : "Preis für die Schweiz";
+    const button = $("#startCheckoutBtn");
+    button.textContent = `Premium mit ${isEuro ? "€" : "CHF"} 6/Monat wählen`;
+    button.disabled = !$("#billingTermsInput").checked;
+  }
+
+  async function startBillingCheckout() {
+    const button = $("#startCheckoutBtn"), message = $("#billingMessage");
+    if (!$("#billingTermsInput").checked) return;
+    button.disabled = true; message.textContent = "Sichere Zahlungsseite wird geöffnet…";
+    const operation = pendingOperationKey(`billing-checkout.${currentUser.id}.${billingCurrency}`);
+    try {
+      const { data, error } = await db.functions.invoke("billing-checkout", {
+        body: { currency: billingCurrency, termsAccepted: true },
+        headers: { "x-idempotency-key": operation.key },
+      });
+      const code = await functionErrorCode(error, data);
+      if (error || !data?.url) throw new Error(code || "checkout_failed");
+      completeOperation(operation.storageKey);
+      location.assign(data.url);
+    } catch (error) {
+      if (DEFINITIVE_OPERATION_ERRORS.has(error.message)) completeOperation(operation.storageKey);
+      message.textContent = error.message === "billing_not_configured"
+        ? "Zahlungen werden gerade eingerichtet. Bitte versuche es später erneut."
+        : "Die Zahlungsseite konnte nicht geöffnet werden.";
+      renderCheckoutButton();
+    }
+  }
+
+  async function openBillingPortal() {
+    const button = $("#openBillingPortalBtn"), message = $("#billingMessage");
+    button.disabled = true; message.textContent = "Abo-Verwaltung wird geöffnet…";
+    try {
+      const { data, error } = await db.functions.invoke("billing-portal", { body: {} });
+      if (error || !data?.url) throw new Error("portal_failed");
+      location.assign(data.url);
+    } catch { message.textContent = "Die Abo-Verwaltung konnte nicht geöffnet werden."; button.disabled = false; }
+  }
 
   function updateNavIdentity(profile = null) {
     $("#userEmail").textContent = state.privacy ? "Konto geschützt" : (currentUser?.email || "Angemeldet");
@@ -2822,6 +3128,7 @@
     $("#settingsAccountMessage").textContent = "Profil wird geladen…";
     $("#settingsEmail").value = currentUser.email || "";
     updateNavIdentity();
+    void refreshBillingStatus();
     try {
       const expectedUserId = currentUser.id;
       const { data, error } = await db.from("user_profiles")
@@ -2939,7 +3246,7 @@
   // explicit, revocable opt-in. The Edge Functions enforce the same rule.
   async function ensureAiConsent() {
     if (userProfile?.ai_processing_consent_at) return true;
-    const accepted = confirm("KI-Funktionen freigeben?\n\nFür diese Funktion werden die nötigen Inhalte (z.B. Stellenbeschreibung, Notizen, weitergeleitete E-Mail) an OpenAI übermittelt und dort nicht für Training verwendet. Deinen Lebenslauf senden wir nur mit separater Freigabe.\n\nDu kannst die Freigabe jederzeit in den Einstellungen unter „Datenschutz & KI“ widerrufen.");
+    const accepted = confirm("KI-Funktionen freigeben?\n\nFür diese Funktion werden die nötigen Inhalte (z.B. Stellenbeschreibung, Notizen, weitergeleitete E-Mail) an OpenAI übermittelt. OpenAI verwendet API-Daten nicht zum Training; Inhalte können zur Missbrauchserkennung bis zu 30 Tage aufbewahrt werden. Deinen Lebenslauf senden wir nur mit separater Freigabe.\n\nDu kannst die Freigabe jederzeit in den Einstellungen unter „Datenschutz & KI“ widerrufen.");
     if (!accepted) return false;
     const saved = await saveConsent({ ai_processing_consent_at: new Date().toISOString() });
     if (!saved) toast("Freigabe konnte nicht gespeichert werden");
@@ -3100,6 +3407,13 @@
   $("#inboundBtn").addEventListener("click", openInboundDialog);
   $("#privacyBtn").addEventListener("click", togglePrivacyMode);
   $("#settingsBtn").addEventListener("click", openSettings);
+  $("#openBillingBtn").addEventListener("click", () => openBillingModal());
+  $("#billingCloseBtn").addEventListener("click", closeBillingModal);
+  $("#billingSuccessBtn").addEventListener("click", closeBillingModal);
+  $("#billingOverlay").addEventListener("click", closeBillingModal);
+  $("#billingTermsInput").addEventListener("change", renderCheckoutButton);
+  $("#startCheckoutBtn").addEventListener("click", startBillingCheckout);
+  $("#openBillingPortalBtn").addEventListener("click", openBillingPortal);
   $("#settingsCloseBtn").addEventListener("click", closeSettings);
   settingsOverlay.addEventListener("click", closeSettings);
   $("#accountSettingsForm").addEventListener("submit", saveAccountSettings);
@@ -3108,6 +3422,9 @@
   $("#settingsImportBtn").addEventListener("click", () => { closeSettings(); openImportDialog(); });
   $("#openPremiumStatsBtn").addEventListener("click", () => { closeSettings(); setView("insights"); });
   $("#settingsSignoutBtn").addEventListener("click", () => { closeSettings(); db.auth.signOut(); });
+  window.addEventListener("pageshow", () => {
+    if (currentUser?.id) void refreshBillingStatus();
+  });
   $("#deleteAllDataBtn").addEventListener("click", deleteAllUserData);
   $("#aiConsentInput").addEventListener("change", (event) => void updateConsent("ai_processing_consent_at", event.target.checked));
   $("#aiCvConsentInput").addEventListener("change", (event) => void updateConsent("ai_cv_consent_at", event.target.checked));
@@ -3434,15 +3751,22 @@
   });
 
   /* ---------- Anmeldung & Boot ---------- */
-  const authShell = $("#authShell"), mainApp = $("#mainApp"), authForm = $("#authForm");
+  const appBoot = $("#appBoot"), authShell = $("#authShell"), mainApp = $("#mainApp"), authForm = $("#authForm");
   const authMessage = $("#authMessage"), authSubmit = $("#authSubmit");
-  const loginTab = $("#loginTab"), signupTab = $("#signupTab"), googleAuthBtn = $("#googleAuthBtn");
+  const loginTab = $("#loginTab"), signupTab = $("#signupTab");
   const authPassword = $("#authPassword"), authPasswordToggle = $("#authPasswordToggle");
+  const authPasswordConfirm = $("#authPasswordConfirm"), authPasswordConfirmField = $("#authPasswordConfirmField");
+  const passwordStrength = $("#passwordStrength"), passwordStrengthText = $("#passwordStrengthText");
+  const authConfirmDialog = $("#authConfirmDialog"), authConfirmOverlay = $("#authConfirmOverlay"), authConfirmClose = $("#authConfirmClose");
   const onboardingShell = $("#onboardingShell"), onboardingForm = $("#onboardingForm");
   const onboardingBack = $("#onboardingBack"), onboardingNext = $("#onboardingNext");
-  const onboardingSkip = $("#onboardingSkip"), onboardingGoal = $("#onboardingGoal");
+  const onboardingSkip = $("#onboardingSkip"), onboardingSignout = $("#onboardingSignout"), onboardingGoal = $("#onboardingGoal");
   let authMode = "login";
+  let authCaptchaToken = "";
+  let authTurnstileWidgetId = null;
   let onboardingStep = 0;
+  let onboardingGoalValue = 10;
+  let onboardingViewportBaseline = 0;
   let employmentStatus = null;
   let appStarted = false;
 
@@ -3453,6 +3777,7 @@
 
   function friendlyAuthError(error) {
     const code = error?.code || "";
+    if (code === "captcha_failed") return "Der Bot-Schutz ist abgelaufen. Bitte bestätige ihn erneut.";
     if (code === "invalid_credentials") return "E-Mail-Adresse oder Passwort ist nicht korrekt.";
     if (code === "email_not_confirmed") return "Bitte bestätige zuerst deine E-Mail-Adresse.";
     if (code === "user_already_exists") return "Für diese E-Mail-Adresse gibt es bereits ein Konto.";
@@ -3462,10 +3787,70 @@
 
   function setAuthBusy(busy) {
     authSubmit.disabled = busy;
-    googleAuthBtn.disabled = busy;
+    authSubmit.classList.toggle("is-busy", busy);
+    authSubmit.setAttribute("aria-busy", String(busy));
     loginTab.disabled = busy;
     signupTab.disabled = busy;
   }
+
+  function resetAuthTurnstile() {
+    authCaptchaToken = "";
+    authTurnstileRetries = 0;
+    if (authTurnstileWidgetId !== null && window.turnstile) {
+      try { window.turnstile.reset(authTurnstileWidgetId); } catch {}
+    }
+  }
+
+  let authTurnstileRetries = 0;
+  const TURNSTILE_MAX_RETRIES = 3;
+
+  function turnstileErrorMessage(code) {
+    const c = String(code || "");
+    // 1101xx: ungültiger Site-Key · 110200: Domain nicht für das Widget freigegeben.
+    if (/^1101/.test(c) || c === "110200") return `Der Bot-Schutz ist für diese Adresse nicht freigegeben (Code ${c}). Bitte nutze www.jobply.app.`;
+    // 200500: iframe blockiert · 110500/110510: Browser zu alt bzw. eingeschränkt.
+    if (c === "200500" || /^1105/.test(c)) return `Der Bot-Schutz wird von deinem Browser blockiert (Code ${c}). Bitte deaktiviere Werbe- oder Tracking-Blocker für diese Seite oder versuche einen anderen Browser.`;
+    return `Der Bot-Schutz konnte nicht bestätigt werden${c ? ` (Code ${c})` : ""}. Bitte lade die Seite neu.`;
+  }
+
+  function handleAuthTurnstileError(code) {
+    authCaptchaToken = "";
+    const c = String(code || "");
+    console.warn("Turnstile error", c);
+    const permanent = /^1101/.test(c) || c === "110200" || /^1105/.test(c) || c === "200500";
+    if (!permanent && authTurnstileRetries < TURNSTILE_MAX_RETRIES && authTurnstileWidgetId !== null && window.turnstile) {
+      authTurnstileRetries += 1;
+      authStatus("Bot-Schutz wird erneut geprüft …", true);
+      setTimeout(() => { try { window.turnstile.reset(authTurnstileWidgetId); } catch {} }, 800 * authTurnstileRetries);
+      return true;
+    }
+    authStatus(turnstileErrorMessage(c));
+    return true;
+  }
+
+  function renderAuthTurnstile() {
+    if (!window.turnstile || authTurnstileWidgetId !== null || !$("#authTurnstile")) return;
+    authTurnstileWidgetId = window.turnstile.render("#authTurnstile", {
+      sitekey: TURNSTILE_SITE_KEY,
+      action: "auth",
+      theme: "light",
+      size: "flexible",
+      appearance: "interaction-only",
+      "refresh-expired": "auto",
+      callback: (token) => { authCaptchaToken = token; authTurnstileRetries = 0; authStatus(""); },
+      "expired-callback": () => { authCaptchaToken = ""; },
+      "timeout-callback": () => { authCaptchaToken = ""; try { window.turnstile.reset(authTurnstileWidgetId); } catch {} },
+      "error-callback": handleAuthTurnstileError,
+    });
+  }
+
+  window.jobplyTurnstileReady = renderAuthTurnstile;
+  // Das Turnstile-Skript kann von Blockern still verhindert werden; dann gäbe es nie einen Callback.
+  setTimeout(() => {
+    if (!window.turnstile && !authShell.hidden && !authCaptchaToken) {
+      authStatus("Der Bot-Schutz konnte nicht geladen werden. Bitte prüfe deine Verbindung oder deaktiviere Blocker für challenges.cloudflare.com.");
+    }
+  }, 12000);
 
   function resetPasswordVisibility() {
     authPassword.type = "password";
@@ -3473,29 +3858,105 @@
     authPasswordToggle.setAttribute("aria-label", "Passwort anzeigen");
   }
 
+  function passwordAssessment(password) {
+    const checks = [
+      { valid: password.length >= MIN_SIGNUP_PASSWORD, label: `${MIN_SIGNUP_PASSWORD} Zeichen` },
+      { valid: /[a-zäöü]/.test(password), label: "Kleinbuchstabe" },
+      { valid: /[A-ZÄÖÜ]/.test(password), label: "Grossbuchstabe" },
+      { valid: /\d/.test(password), label: "Zahl" },
+      { valid: /[^\p{L}\p{N}\s]/u.test(password), label: "Sonderzeichen" },
+    ];
+    const passed = checks.filter((check) => check.valid).length;
+    return {
+      strong: passed === checks.length,
+      score: password ? Math.max(1, Math.min(4, Math.ceil((passed / checks.length) * 4))) : 0,
+      missing: checks.filter((check) => !check.valid).map((check) => check.label),
+    };
+  }
+
+  function updatePasswordFeedback() {
+    if (authMode !== "signup") return;
+    const assessment = passwordAssessment(authPassword.value);
+    passwordStrength.dataset.score = String(assessment.score);
+    passwordStrengthText.textContent = assessment.strong
+      ? "Starkes Passwort"
+      : `Noch nötig: ${assessment.missing.join(", ")}`;
+    const confirmWrapper = authPasswordConfirm.closest(".auth-input");
+    const hasConfirmation = authPasswordConfirm.value.length > 0;
+    const matches = hasConfirmation && authPasswordConfirm.value === authPassword.value;
+    confirmWrapper.classList.toggle("is-valid", matches);
+    confirmWrapper.classList.toggle("is-invalid", hasConfirmation && !matches);
+  }
+
+  function showAuthConfirmation(email) {
+    $("#authConfirmEmail").textContent = email;
+    authConfirmOverlay.hidden = false;
+    authConfirmDialog.hidden = false;
+    authConfirmDialog.setAttribute("aria-hidden", "false");
+    requestAnimationFrame(() => {
+      authConfirmOverlay.classList.add("show");
+      authConfirmDialog.classList.add("show");
+      authConfirmClose.focus();
+    });
+  }
+
+  function closeAuthConfirmation() {
+    authConfirmOverlay.classList.remove("show");
+    authConfirmDialog.classList.remove("show");
+    authConfirmDialog.setAttribute("aria-hidden", "true");
+    setTimeout(() => {
+      if (!authConfirmDialog.classList.contains("show")) {
+        authConfirmOverlay.hidden = true;
+        authConfirmDialog.hidden = true;
+        setAuthMode("login");
+        $("#authEmail").focus();
+      }
+    }, 240);
+  }
+
   function setAuthMode(mode) {
+    const previousMode = authMode;
     authMode = mode === "signup" ? "signup" : "login";
     const signup = authMode === "signup";
+    if (previousMode !== authMode) {
+      // Restart the title transition so every switch animates.
+      const heading = $(".auth-heading");
+      heading.classList.remove("is-swapping");
+      void heading.offsetWidth;
+      heading.classList.add("is-swapping");
+    }
     loginTab.classList.toggle("active", !signup);
     signupTab.classList.toggle("active", signup);
     loginTab.setAttribute("aria-selected", String(!signup));
     signupTab.setAttribute("aria-selected", String(signup));
-    $("#authTitle").textContent = signup ? "Deine Jobsuche beginnt hier." : "Schön, dich wiederzusehen.";
+    authShell.classList.toggle("signup-mode", signup);
+    $("#authTitle").textContent = signup ? "Konto erstellen." : "Willkommen zurück.";
     $("#authSubtitle").textContent = signup
-      ? "Erstelle dein Konto und bring Struktur in deine Jobsuche."
-      : "Melde dich an und mach dort weiter, wo du aufgehört hast.";
+      ? "In wenigen Schritten zu mehr Überblick."
+      : "Melde dich an und mach direkt weiter.";
     authSubmit.querySelector("span").textContent = signup ? "Kostenlos registrieren" : "Anmelden";
-    googleAuthBtn.querySelector("span").textContent = signup ? "Mit Google registrieren" : "Mit Google anmelden";
     $("#authTerms").textContent = signup
-      ? "Das gilt auch für die Registrierung mit Google."
+      ? "Mit der Registrierung bestätigst du die Datenschutzerklärung."
       : "Für die Nutzung gilt unsere Datenschutzerklärung.";
-    $("#authConsent").hidden = !signup;
+    const consent = $("#authConsent");
+    consent.hidden = false;
+    consent.classList.toggle("placeholder", !signup);
+    consent.setAttribute("aria-hidden", String(!signup));
+    $("#authConsentInput").disabled = !signup;
     $("#authConsentInput").checked = false;
     authPassword.autocomplete = signup ? "new-password" : "current-password";
     authPassword.minLength = signup ? MIN_SIGNUP_PASSWORD : 1;
     authPassword.placeholder = signup ? `Mindestens ${MIN_SIGNUP_PASSWORD} Zeichen` : "Dein Passwort";
     authPassword.value = "";
+    authPasswordConfirmField.hidden = !signup;
+    authPasswordConfirm.required = signup;
+    authPasswordConfirm.value = "";
+    passwordStrength.hidden = !signup;
+    passwordStrength.dataset.score = "0";
+    passwordStrengthText.textContent = `Mind. ${MIN_SIGNUP_PASSWORD} Zeichen mit Gross-/Kleinbuchstaben, Zahl und Sonderzeichen`;
+    authPasswordConfirm.closest(".auth-input").classList.remove("is-valid", "is-invalid");
     resetPasswordVisibility();
+    resetAuthTurnstile();
     authStatus("");
   }
 
@@ -3537,16 +3998,22 @@
   }
 
   function setOnboardingStep(step) {
+    const previousStep = onboardingStep;
     onboardingStep = Math.max(0, Math.min(3, step));
+    onboardingShell.dataset.direction = onboardingStep < previousStep ? "back" : "forward";
+    onboardingShell.style.setProperty("--onboarding-progress", `${((onboardingStep + 1) / 4) * 100}%`);
     $$('[data-onboarding-step]').forEach((panel) => {
       const active = Number(panel.dataset.onboardingStep) === onboardingStep;
       panel.hidden = !active;
       panel.classList.toggle("active", active);
+      if (active) panel.scrollTop = 0;
     });
     $$('[data-onboarding-indicator]').forEach((indicator) => {
       const index = Number(indicator.dataset.onboardingIndicator);
       indicator.classList.toggle("active", index === onboardingStep);
       indicator.classList.toggle("done", index < onboardingStep);
+      if (index === onboardingStep) indicator.setAttribute("aria-current", "step");
+      else indicator.removeAttribute("aria-current");
     });
     onboardingBack.hidden = onboardingStep === 0;
     onboardingNext.querySelector("span").textContent = onboardingStep === 3 ? "Setup abschließen" : "Weiter";
@@ -3555,31 +4022,81 @@
 
   function updateOnboardingGoal(value) {
     const safeValue = Math.max(1, Math.min(50, Number(value) || 10));
+    const previousValue = onboardingGoalValue;
+    onboardingGoalValue = safeValue;
     onboardingGoal.value = String(safeValue);
-    $("#onboardingGoalOutput").querySelector("strong").textContent = String(safeValue);
+    onboardingGoal.style.setProperty("--goal-progress", `${((safeValue - 1) / 49) * 100}%`);
+    onboardingGoal.setAttribute("aria-valuetext", `${safeValue} Bewerbungen pro Monat`);
+    const output = $("#onboardingGoalOutput");
+    output.querySelector("strong").textContent = String(safeValue);
+    output.querySelector("span").textContent = safeValue === 1 ? "Bewerbung pro Monat" : "Bewerbungen pro Monat";
+    if (safeValue !== previousValue) {
+      output.classList.remove("value-pop");
+      requestAnimationFrame(() => output.classList.add("value-pop"));
+    }
     $$('[data-goal]').forEach((button) => button.classList.toggle("active", Number(button.dataset.goal) === safeValue));
   }
 
+  function keepOnboardingControlVisible(target, smooth = true) {
+    if (onboardingShell.hidden || !matchMedia("(max-width: 700px)").matches) return;
+    if (!(target instanceof HTMLElement) || !target.matches("input, button, label")) return;
+    setTimeout(() => {
+      if (document.activeElement === target || target.matches('[type="range"]')) {
+        target.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "center", inline: "nearest" });
+      }
+    }, 260);
+  }
+
+  function updateOnboardingKeyboardState() {
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    const focused = document.activeElement?.closest?.("#onboardingForm");
+    if (!focused || onboardingShell.hidden || !matchMedia("(max-width: 700px)").matches) {
+      document.body.classList.remove("keyboard-open");
+      if (!focused) onboardingViewportBaseline = Math.max(onboardingViewportBaseline, viewportHeight);
+      return;
+    }
+    const keyboardHeight = Math.max(
+      0,
+      onboardingViewportBaseline - viewportHeight,
+      window.innerHeight - viewportHeight
+    );
+    document.body.classList.toggle("keyboard-open", keyboardHeight > 110);
+  }
+
   function showOnboarding() {
-    onboardingForm.reset();
-    $("#onboardingCvLabel").textContent = "Lebenslauf auswählen";
-    employmentStatus = null;
-    $$('[data-employment]').forEach((button) => button.classList.remove("selected"));
-    updateOnboardingGoal(10);
-    setOnboardingStep(0);
-    $("#onboardingConsent").hidden = Boolean(privacyAcceptance(currentUser).privacy_accepted_at || userProfile?.privacy_accepted_at);
-    $("#onboardingConsentInput").checked = false;
+    // Switch screens first so a non-critical form initialisation issue can
+    // never leave an authenticated user trapped on the boot screen.
     authShell.hidden = true;
     mainApp.hidden = true;
+    appBoot.hidden = true;
     onboardingShell.hidden = false;
+    document.body.classList.add("onboarding-open");
+    onboardingViewportBaseline = window.visualViewport?.height || window.innerHeight;
+    document.body.classList.remove("keyboard-open");
+    // Keep independent setup operations isolated. A browser-specific issue in
+    // one optional reset must neither block the others nor alarm the user.
+    const initializers = [
+      () => setOnboardingStep(0),
+      () => onboardingForm.reset(),
+      () => { $("#onboardingCvLabel").textContent = "Lebenslauf auswählen"; },
+      () => { employmentStatus = null; },
+      () => $$('[data-employment]').forEach((button) => button.classList.remove("selected")),
+      () => updateOnboardingGoal(10),
+      () => { $("#onboardingConsent").hidden = Boolean(privacyAcceptance(currentUser).privacy_accepted_at || userProfile?.privacy_accepted_at); },
+      () => { $("#onboardingConsentInput").checked = false; },
+    ];
+    initializers.forEach((initialize, index) => {
+      try { initialize(); }
+      catch (error) { console.warn(`Onboarding initializer ${index + 1} skipped`, error); }
+    });
+    const message = $("#onboardingMessage");
+    if (message) message.textContent = "";
   }
 
   function onboardingRequested(user) {
-    let googleIntent = false;
-    try { googleIntent = sessionStorage.getItem("jobply_google_onboarding") === "1"; } catch {}
     const createdAt = Date.parse(user?.created_at || "");
     const createdAfterRelease = Number.isFinite(createdAt) && createdAt >= ONBOARDING_RELEASE_AT;
-    return user?.user_metadata?.onboarding_required === true || googleIntent || createdAfterRelease;
+    return user?.user_metadata?.onboarding_required === true || createdAfterRelease;
   }
 
   async function needsOnboarding(user, expectedEpoch, signal) {
@@ -3595,7 +4112,10 @@
   }
 
   function revealMainApp() {
+    document.body.classList.remove("onboarding-open");
+    document.body.classList.remove("keyboard-open");
     onboardingShell.hidden = true;
+    appBoot.hidden = true;
     let view = "list";
     try { const saved = localStorage.getItem(VIEW_KEY); view = ["list", "interviews", "insights"].includes(saved) ? saved : "list"; } catch {}
     if (location.hash === "#statistiken") view = "insights";
@@ -3608,18 +4128,17 @@
     privacyButton.setAttribute("aria-label", state.privacy ? "Privacy-Modus deaktivieren" : "Privacy-Modus aktivieren");
     privacyButton.title = state.privacy ? "Normale Ansicht wiederherstellen" : "Sichere Ansicht für Screenshots";
     mainApp.hidden = false;
+    updatePremiumNavbar();
     render();
     refreshInbound({ quiet: true });
   }
 
   // The acknowledgement given at sign-up is recorded with the policy version so it
-  // can be proven later. Google sign-ups carry it through sessionStorage.
+  // can be proven later.
   function privacyAcceptance(user) {
     const metadata = user?.user_metadata || {};
-    let stored = null;
-    try { stored = JSON.parse(sessionStorage.getItem(PRIVACY_ACCEPT_KEY) || "null"); } catch {}
-    const version = metadata.privacy_policy_version || stored?.version;
-    const acceptedAt = metadata.privacy_accepted_at || stored?.at;
+    const version = metadata.privacy_policy_version;
+    const acceptedAt = metadata.privacy_accepted_at;
     if (!version || !acceptedAt || userProfile?.privacy_accepted_at) return {};
     return { privacy_policy_version: String(version).slice(0, 20), privacy_accepted_at: acceptedAt };
   }
@@ -3633,6 +4152,7 @@
     }
     onboardingNext.disabled = true;
     onboardingSkip.disabled = true;
+    onboardingSignout.disabled = true;
     $("#onboardingMessage").textContent = skipped ? "Wird übersprungen…" : "Dein Setup wird gespeichert…";
     const profile = {
       user_id: currentUser.id,
@@ -3656,14 +4176,28 @@
         const { data } = await db.auth.updateUser({ data: { onboarding_required: false } });
         if (data?.user) currentUser = data.user;
       } catch {}
-      try { sessionStorage.removeItem("jobply_google_onboarding"); sessionStorage.removeItem(PRIVACY_ACCEPT_KEY); } catch {}
       revealMainApp();
     } catch {
       $("#onboardingMessage").textContent = "Das Setup konnte nicht gespeichert werden. Bitte versuche es erneut.";
     } finally {
       onboardingNext.disabled = false;
       onboardingSkip.disabled = false;
+      onboardingSignout.disabled = false;
     }
+  }
+
+  async function signOutFromOnboarding() {
+    if (onboardingSignout.disabled) return;
+    onboardingNext.disabled = true;
+    onboardingSkip.disabled = true;
+    onboardingSignout.disabled = true;
+    $("#onboardingMessage").textContent = "Du wirst abgemeldet…";
+    const { error } = await db.auth.signOut({ scope: "local" });
+    if (!error) return;
+    $("#onboardingMessage").textContent = "Abmelden ist fehlgeschlagen. Bitte versuche es erneut.";
+    onboardingNext.disabled = false;
+    onboardingSkip.disabled = false;
+    onboardingSignout.disabled = false;
   }
 
   async function startApp(session) {
@@ -3684,6 +4218,7 @@
     closeInboundDialog();
     inboundAliasEditor.hidden = true;
     appStarted = true;
+    appBoot.hidden = false;
     currentUser = session.user;
     // Credentials must never survive in hidden login controls after a
     // successful authentication or an account switch.
@@ -3698,6 +4233,11 @@
     authShell.hidden = true;
     onboardingShell.hidden = true;
     mainApp.hidden = true;
+    // A fresh sign-up must reach onboarding immediately. Do not make this
+    // screen depend on applications, billing or any other network request.
+    if (currentUser?.user_metadata?.onboarding_required === true) {
+      return showOnboarding();
+    }
     try {
       const applications = await loadCloudData(expectedEpoch, expectedUserId, signal);
       if (!isActiveAuthContext(expectedEpoch, expectedUserId) || applications === null) return;
@@ -3722,13 +4262,31 @@
       userProfile = null;
     }
     if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
+    await refreshBillingStatus();
+    if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
     try {
       if (await needsOnboarding(currentUser, expectedEpoch, signal)) return showOnboarding();
     } catch (error) {
       if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
+      console.error("Onboarding status could not be loaded", error);
+      // Never let a newly registered account bypass onboarding merely because
+      // the profile request failed temporarily. The signed user metadata is
+      // written during sign-up and is the safe fallback for this exact case.
+      if (onboardingRequested(currentUser)) {
+        setTimeout(() => toast("Dein Setup wird jetzt geöffnet"), 250);
+        return showOnboarding();
+      }
       setTimeout(() => toast(error.code === "42P01" ? "Onboarding-Datenbank muss noch eingerichtet werden" : "Onboarding konnte nicht geladen werden"), 400);
     }
     revealMainApp();
+    const billingResult = new URLSearchParams(location.search).get("billing");
+    if (billingResult) {
+      history.replaceState(null, "", `${location.pathname}${location.hash}`);
+      setTimeout(() => {
+        if (billingResult === "success") void openBillingSuccess();
+        else if (billingResult === "cancelled") openBillingModal("Der Bezahlvorgang wurde abgebrochen. Es wurde nichts belastet.");
+      }, 250);
+    }
   }
 
   function scrubSensitiveClientState() {
@@ -3745,6 +4303,9 @@
     pendingImport = null;
     pendingShareCard = null;
     employmentStatus = null;
+    billingState = { premium: false, used: 0, remaining: 3, status: "inactive", hasCustomer: false };
+    updatePremiumNavbar();
+    billingCurrency = detectBillingCurrency();
 
     // Reset values first, then remove all rendered user-controlled content.
     // The structural dialog markup stays intact so another account can log in
@@ -3788,8 +4349,20 @@
     closeInboundDialog();
     currentUser = null;
     scrubSensitiveClientState();
+    document.body.classList.remove("onboarding-open");
+    document.body.classList.remove("keyboard-open");
+    // Account switches happen without a full page reload. Reset both the
+    // stored step number and the panels' hidden state for the next user.
+    try {
+      setOnboardingStep(0);
+      updateOnboardingGoal(10);
+    } catch (error) {
+      console.error("Onboarding state could not be reset", error);
+      onboardingStep = 0;
+    }
     mainApp.hidden = true;
     onboardingShell.hidden = true;
+    appBoot.hidden = true;
     authShell.hidden = false;
     setAuthMode("login");
     setAuthBusy(false);
@@ -3800,71 +4373,64 @@
     if (!db) return authStatus("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.");
     const email = $("#authEmail").value.trim();
     const password = authPassword.value;
+    const passwordConfirmation = authPasswordConfirm.value;
     const createAccount = authMode === "signup";
     if (!email || !password) return authStatus("Bitte E-Mail und Passwort eingeben.");
-    if (createAccount && password.length < MIN_SIGNUP_PASSWORD) return authStatus(`Bitte wähle ein Passwort mit mindestens ${MIN_SIGNUP_PASSWORD} Zeichen.`);
+    if (createAccount && !passwordAssessment(password).strong) return authStatus("Bitte erfülle alle Anforderungen für ein starkes Passwort.");
+    if (createAccount && password !== passwordConfirmation) return authStatus("Die beiden Passwörter stimmen nicht überein.");
     if (createAccount && !$("#authConsentInput").checked) return authStatus("Bitte bestätige, dass du die Datenschutzerklärung zur Kenntnis genommen hast.");
+    if (!authCaptchaToken) return authStatus("Bitte bestätige kurz den Bot-Schutz.");
     authStatus(createAccount ? "Konto wird erstellt…" : "Anmeldung läuft…", true);
     setAuthBusy(true);
     try {
       const result = createAccount
-        ? await db.auth.signUp({ email, password, options: { data: {
-          onboarding_required: true,
-          privacy_policy_version: PRIVACY_POLICY_VERSION,
-          privacy_accepted_at: new Date().toISOString(),
-        } } })
-        : await db.auth.signInWithPassword({ email, password });
+        ? await db.auth.signUp({ email, password, options: {
+          captchaToken: authCaptchaToken,
+          data: {
+            onboarding_required: true,
+            privacy_policy_version: PRIVACY_POLICY_VERSION,
+            privacy_accepted_at: new Date().toISOString(),
+          },
+        } })
+        : await db.auth.signInWithPassword({ email, password, options: { captchaToken: authCaptchaToken } });
       // Credentials must not remain in the DOM after either success or failure.
       authPassword.value = "";
+      authPasswordConfirm.value = "";
+      updatePasswordFeedback();
       resetPasswordVisibility();
       if (result.error) return authStatus(friendlyAuthError(result.error));
       if (result.data.session) await startApp(result.data.session);
-      else if (createAccount) authStatus("Konto erstellt. Bitte öffne den Bestätigungslink in deiner E-Mail.", true);
+      else if (createAccount) {
+        authStatus("Konto erstellt. Bitte bestätige jetzt deine E-Mail-Adresse.", true);
+        showAuthConfirmation(email);
+      }
     } catch {
       authPassword.value = "";
+      authPasswordConfirm.value = "";
+      updatePasswordFeedback();
       resetPasswordVisibility();
       authStatus("Die Verbindung ist fehlgeschlagen. Bitte versuche es erneut.");
     } finally {
+      resetAuthTurnstile();
       setAuthBusy(false);
-    }
-  }
-
-  async function authenticateWithGoogle() {
-    if (!db) return authStatus("Supabase konnte nicht geladen werden. Bitte prüfe deine Internetverbindung.");
-    if (authMode === "signup" && !$("#authConsentInput").checked) return authStatus("Bitte bestätige, dass du die Datenschutzerklärung zur Kenntnis genommen hast.");
-    if (authMode === "signup") {
-      try { sessionStorage.setItem(PRIVACY_ACCEPT_KEY, JSON.stringify({ version: PRIVACY_POLICY_VERSION, at: new Date().toISOString() })); } catch {}
-    }
-    authStatus("Google-Anmeldung wird geöffnet…", true);
-    setAuthBusy(true);
-    const redirectTo = `${location.origin}${location.pathname}`;
-    try { sessionStorage.setItem("jobply_google_onboarding", authMode === "signup" ? "1" : "0"); } catch {}
-    try {
-      const { error } = await db.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo, queryParams: { prompt: "select_account" } }
-      });
-      if (error) {
-        try { sessionStorage.removeItem("jobply_google_onboarding"); } catch {}
-        setAuthBusy(false);
-        authStatus("Google-Anmeldung konnte nicht gestartet werden. Bitte versuche es erneut.");
-      }
-    } catch {
-      try { sessionStorage.removeItem("jobply_google_onboarding"); } catch {}
-      setAuthBusy(false);
-      authStatus("Google-Anmeldung konnte nicht gestartet werden. Bitte versuche es erneut.");
     }
   }
 
   authForm.addEventListener("submit", (event) => { event.preventDefault(); void authenticate(); });
   loginTab.addEventListener("click", () => setAuthMode("login"));
   signupTab.addEventListener("click", () => setAuthMode("signup"));
-  googleAuthBtn.addEventListener("click", () => void authenticateWithGoogle());
   authPasswordToggle.addEventListener("click", () => {
     const show = authPassword.type === "password";
     authPassword.type = show ? "text" : "password";
     authPasswordToggle.classList.toggle("showing", show);
     authPasswordToggle.setAttribute("aria-label", show ? "Passwort ausblenden" : "Passwort anzeigen");
+  });
+  authPassword.addEventListener("input", updatePasswordFeedback);
+  authPasswordConfirm.addEventListener("input", updatePasswordFeedback);
+  authConfirmClose.addEventListener("click", closeAuthConfirmation);
+  authConfirmOverlay.addEventListener("click", closeAuthConfirmation);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && authConfirmDialog.classList.contains("show")) closeAuthConfirmation();
   });
   onboardingNext.addEventListener("click", () => {
     if (onboardingStep < 3) setOnboardingStep(onboardingStep + 1);
@@ -3872,13 +4438,56 @@
   });
   onboardingBack.addEventListener("click", () => setOnboardingStep(onboardingStep - 1));
   onboardingSkip.addEventListener("click", () => void completeOnboarding(true));
+  onboardingSignout.addEventListener("click", () => void signOutFromOnboarding());
   $("#employmentOptions").addEventListener("click", (event) => {
     const button = event.target.closest("[data-employment]");
     if (!button) return;
     employmentStatus = button.dataset.employment;
     $$('[data-employment]').forEach((option) => option.classList.toggle("selected", option === button));
   });
-  onboardingGoal.addEventListener("input", () => updateOnboardingGoal(onboardingGoal.value));
+  let onboardingGoalSyncFrame = 0;
+  const syncOnboardingGoal = () => updateOnboardingGoal(onboardingGoal.value);
+  const syncOnboardingGoalWhileDragging = () => {
+    syncOnboardingGoal();
+    if (onboardingGoal.classList.contains("dragging")) {
+      onboardingGoalSyncFrame = requestAnimationFrame(syncOnboardingGoalWhileDragging);
+    }
+  };
+  const startOnboardingGoalDrag = () => {
+    onboardingGoal.classList.add("dragging");
+    cancelAnimationFrame(onboardingGoalSyncFrame);
+    onboardingGoalSyncFrame = requestAnimationFrame(syncOnboardingGoalWhileDragging);
+  };
+  const stopOnboardingGoalDrag = () => {
+    onboardingGoal.classList.remove("dragging");
+    cancelAnimationFrame(onboardingGoalSyncFrame);
+    onboardingGoalSyncFrame = 0;
+    syncOnboardingGoal();
+  };
+  onboardingGoal.addEventListener("input", syncOnboardingGoal);
+  onboardingGoal.addEventListener("change", syncOnboardingGoal);
+  onboardingGoal.addEventListener("pointerdown", startOnboardingGoalDrag);
+  onboardingGoal.addEventListener("touchstart", startOnboardingGoalDrag, { passive: true });
+  window.addEventListener("pointerup", stopOnboardingGoalDrag);
+  window.addEventListener("pointercancel", stopOnboardingGoalDrag);
+  window.addEventListener("touchend", stopOnboardingGoalDrag, { passive: true });
+  window.addEventListener("touchcancel", stopOnboardingGoalDrag, { passive: true });
+  onboardingForm.addEventListener("focusin", (event) => {
+    keepOnboardingControlVisible(event.target);
+    setTimeout(updateOnboardingKeyboardState, 120);
+  });
+  onboardingForm.addEventListener("focusout", () => setTimeout(updateOnboardingKeyboardState, 80));
+  onboardingForm.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.isComposing && onboardingStep === 0 && event.target.matches("input")) {
+      event.preventDefault();
+      setOnboardingStep(1);
+    }
+  });
+  window.visualViewport?.addEventListener("resize", () => {
+    const focused = document.activeElement;
+    if (focused?.closest?.("#onboardingForm")) keepOnboardingControlVisible(focused, false);
+    updateOnboardingKeyboardState();
+  });
   $("#onboardingCv").addEventListener("change", (event) => {
     const file = event.target.files?.[0];
     $("#onboardingCvLabel").textContent = file?.name || "Lebenslauf auswählen";
@@ -3887,9 +4496,38 @@
   setAuthMode("login");
 
   async function boot() {
-    if (!db) return authStatus("Supabase konnte nicht geladen werden. Bitte Seite neu laden.");
-    const { data } = await db.auth.getSession();
-    if (data.session) await startApp(data.session);
+    if (!db) {
+      appBoot.hidden = true;
+      authShell.hidden = false;
+      return authStatus("Supabase konnte nicht geladen werden. Bitte Seite neu laden.");
+    }
+    try {
+      const { data, error } = await db.auth.getSession();
+      if (error) throw error;
+      if (data.session) {
+        // getSession() may return a locally cached token for an account that
+        // has since been deleted or revoked. Verify it with the Auth server
+        // before allowing the app or onboarding to start.
+        const { data: verified, error: verificationError } = await db.auth.getUser();
+        if (verificationError || !verified?.user) {
+          await db.auth.signOut({ scope: "local" }).catch(() => {});
+          appBoot.hidden = true;
+          authShell.hidden = false;
+          setAuthMode("login");
+          authStatus("Deine bisherige Sitzung ist nicht mehr gültig. Bitte melde dich erneut an.");
+        } else {
+          await startApp({ ...data.session, user: verified.user });
+        }
+      }
+      else {
+        appBoot.hidden = true;
+        authShell.hidden = false;
+      }
+    } catch {
+      appBoot.hidden = true;
+      authShell.hidden = false;
+      authStatus("Die Sitzung konnte nicht geprüft werden. Bitte versuche es erneut.");
+    }
     db.auth.onAuthStateChange((event, session) => {
       setTimeout(() => {
         if (session) void startApp(session);
