@@ -1954,7 +1954,7 @@
     linkType.value = "bestaetigung";
     $("#deleteBtn").hidden = state.isNew;
 
-    renderDrawerHead(); renderStatusPicker(); renderPhase(); renderFollowUpControls(); renderLinks(); renderNotes();
+    renderDrawerHead(); renderJobFit(); renderStatusPicker(); renderPhase(); renderFollowUpControls(); renderLinks(); renderNotes();
     emailTemplateId = "follow7";
     emailLanguage = "de";
     emailTextCustomized = false;
@@ -2020,11 +2020,48 @@
   function startMagicLoadingPhases() {
     stopMagicLoadingPhases();
     magicLoadingPhase = 0;
+    $("#jobFitCard").hidden = true;
     setMagicStatus(MAGIC_LOADING_PHASES[magicLoadingPhase], "loading");
     magicLoadingTimer = setInterval(() => {
       magicLoadingPhase = (magicLoadingPhase + 1) % MAGIC_LOADING_PHASES.length;
       setMagicStatus(MAGIC_LOADING_PHASES[magicLoadingPhase], "loading");
     }, 1650);
+  }
+
+  function renderJobFit() {
+    const card = $("#jobFitCard");
+    const scoreElement = $("#jobFitScore");
+    const metadata = state.draft?.sourceMetadata?.magicImport;
+    if (!metadata || !Object.prototype.hasOwnProperty.call(metadata, "usedCv")) {
+      card.hidden = true;
+      return;
+    }
+
+    card.hidden = false;
+    card.classList.toggle("no-score", !metadata.usedCv);
+    if (!metadata.usedCv) {
+      card.removeAttribute("data-band");
+      card.style.setProperty("--fit-progress", "0deg");
+      $("#jobFitValue").textContent = "–";
+      $("#jobFitTitle").textContent = userProfile?.cv_path
+        ? "CV für den Job-Fit freigeben"
+        : "Lebenslauf für den Job-Fit hinterlegen";
+      $("#jobFitSummary").textContent = userProfile?.cv_path
+        ? "Aktiviere unter Einstellungen die CV-Nutzung für KI und importiere den Job erneut."
+        : "Hinterlege deinen Lebenslauf in den Einstellungen und importiere den Job erneut.";
+      scoreElement.setAttribute("aria-label", "Job-Fit konnte ohne freigegebenen Lebenslauf nicht berechnet werden");
+      return;
+    }
+
+    const score = Math.max(0, Math.min(10, Math.round(Number(metadata.fitScore) || 0)));
+    const band = score >= 9 ? "excellent" : score >= 7 ? "good" : score >= 4 ? "medium" : "low";
+    const title = score >= 9 ? "Ausgezeichneter Fit" : score >= 7 ? "Starker Fit" : score >= 5 ? "Solider Fit" : score >= 3 ? "Teilweiser Fit" : "Geringer Fit";
+    card.dataset.band = band;
+    card.style.setProperty("--fit-progress", `${score * 36}deg`);
+    $("#jobFitValue").textContent = String(score);
+    $("#jobFitTitle").textContent = title;
+    $("#jobFitSummary").textContent = String(metadata.fitSummary || "Abgleich von Stellenanforderungen und Lebenslauf abgeschlossen.");
+    scoreElement.setAttribute("aria-label", `Job-Fit ${score} von 10: ${title}`);
   }
 
   function normalizedWebUrl(value) {
@@ -2093,7 +2130,12 @@
       state.draft.companyLogoUrl = result.companyLogoUrl || "";
       state.draft.sourceMetadata = {
         ...(state.draft.sourceMetadata || {}),
-        magicImport: { source: result.source, model: result.model, confidence: result.confidence, importedAt: new Date().toISOString() },
+        magicImport: {
+          source: result.source, model: result.model, confidence: result.confidence,
+          usedCv: Boolean(result.usedCv), fitScore: result.fitScore,
+          fitSummary: String(result.fitSummary || "").slice(0, 360),
+          importedAt: new Date().toISOString(),
+        },
       };
       if (!state.draft.links.some((link) => link.type === "inserat" && link.url === state.draft.jobUrl)) {
         state.draft.links.push({ id: uid(), type: "inserat", url: state.draft.jobUrl });
@@ -2104,7 +2146,9 @@
       renderEmailComposer(!emailTextCustomized);
       const confidence = Math.round((Number(result.confidence) || 0) * 100);
       applyBillingUsage(data.usage);
-      setMagicStatus(`${filled} Felder übernommen${confidence ? ` · ${confidence}% Erkennungssicherheit` : ""}. Bitte kurz prüfen.`, "success");
+      renderJobFit();
+      const fitNote = result.usedCv ? ` · Job-Fit ${Math.max(0, Math.min(10, Math.round(Number(result.fitScore) || 0)))}/10` : "";
+      setMagicStatus(`${filled} Felder übernommen${confidence ? ` · ${confidence}% Erkennungssicherheit` : ""}${fitNote}. Bitte kurz prüfen.`, "success");
     } catch (error) {
       if (!isActiveAuthContext(expectedEpoch, expectedUserId) || state.draft !== expectedDraft) return;
       if (DEFINITIVE_OPERATION_ERRORS.has(error.code)) completeOperation(operation.storageKey);
@@ -2113,6 +2157,7 @@
     } finally {
       stopMagicLoadingPhases();
       if (!isActiveAuthContext(expectedEpoch, expectedUserId) || state.draft !== expectedDraft) return;
+      renderJobFit();
       runMagicImportBtn.disabled = false;
       $("#pasteJobUrlBtn").disabled = false;
     }
