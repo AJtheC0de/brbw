@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="manifest" href="icons/site.webmanifest">
   <link rel="preload" href="fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=20261104-9">
+  <link rel="stylesheet" href="styles.css?v=20261104-10">
 </head>
 <body>
   <div class="bg-glow" aria-hidden="true"></div>
@@ -818,6 +818,21 @@
         </p>
       </section>
 
+      <section class="inbound-live" id="inboundLive" aria-live="polite" hidden>
+        <span class="inbound-live-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 7 8 6 8-6"/></svg>
+          <i></i>
+        </span>
+        <div class="inbound-live-copy">
+          <span>Live-Empfang</span>
+          <h3 id="inboundLiveTitle">Warte auf eine E-Mail</h3>
+          <p id="inboundLiveText">Das Postfach wird automatisch geprüft.</p>
+        </div>
+        <div class="inbound-countdown" id="inboundCountdown" aria-label="Nächste Prüfung in 6 Sekunden">
+          <strong>6</strong><span>s</span>
+        </div>
+      </section>
+
       <section class="inbound-suggestions" aria-labelledby="inboundSuggestionsTitle">
         <div class="block-head inbound-section-head">
           <div><h3 id="inboundSuggestionsTitle">Erkannte Änderungen</h3><p class="muted small">Aus deinen weitergeleiteten E-Mails</p></div>
@@ -863,7 +878,7 @@
 
   <script src="vendor/supabase-2.102.0.min.js"
     integrity="sha384-1qxdq7qui0E5OGQx7KlSCCpPydLIt8lgUjqM3jGxWLXq9AIGC661VIvU/NPT6BQP"></script>
-  <script src="app.js?v=20261104-7"></script>
+  <script src="app.js?v=20261104-8"></script>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=jobplyTurnstileReady&amp;render=explicit" async defer></script>
 </body>
 </html>

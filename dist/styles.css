@@ -1641,6 +1641,53 @@ textarea { height: auto; padding: 10px 12px; resize: vertical; min-height: 64px;
 .inbound-alias-actions > span { margin-right: auto; color: var(--text-3); font-size: 11px; }
 .inbound-privacy-note { display: flex; align-items: flex-start; gap: 8px; margin: 13px 0 0; color: var(--text-2); font-size: 11.5px; }
 .inbound-privacy-note svg { width: 16px; height: 16px; color: var(--s-angebot); }
+.inbound-live {
+  --live-color: #6366d8; --countdown-progress: 360deg;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px;
+  margin-top: 14px; padding: 14px 16px; overflow: hidden; position: relative;
+  border: 1px solid color-mix(in srgb, var(--live-color) 22%, rgba(255,255,255,.9)); border-radius: 17px;
+  background: linear-gradient(115deg, color-mix(in srgb, var(--live-color) 11%, #fff), rgba(255,255,255,.82));
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--live-color) 9%, transparent);
+  transition: border-color .25s, background .25s, box-shadow .25s;
+  animation: inbound-live-in .38s var(--ease) both;
+}
+.inbound-live[hidden] { display: none; }
+.inbound-live::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 38%, rgba(255,255,255,.58) 50%, transparent 62%);
+  transform: translateX(-110%); animation: inbound-scan 3.2s ease-in-out infinite;
+}
+.inbound-live.received { --live-color: #22a267; }
+.inbound-live.checking { --live-color: #775bd6; }
+.inbound-live-icon {
+  position: relative; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 14px;
+  color: var(--live-color); background: color-mix(in srgb, var(--live-color) 13%, #fff);
+}
+.inbound-live-icon svg { width: 21px; height: 21px; }
+.inbound-live-icon i {
+  position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 50%;
+  background: var(--live-color); box-shadow: 0 0 0 0 color-mix(in srgb, var(--live-color) 35%, transparent);
+  animation: inbound-live-pulse 1.5s ease-out infinite;
+}
+.inbound-live-copy { min-width: 0; }
+.inbound-live-copy > span { color: var(--live-color); font-size: 9px; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; }
+.inbound-live-copy h3 { margin-top: 2px; color: var(--text); font-size: 14px; letter-spacing: -.01em; }
+.inbound-live-copy p { margin: 2px 0 0; color: var(--text-2); font-size: 11px; line-height: 1.4; }
+.inbound-countdown {
+  position: relative; isolation: isolate; width: 52px; height: 52px; display: grid; place-items: center; flex: none;
+  border-radius: 50%; color: var(--live-color);
+  background: conic-gradient(var(--live-color) var(--countdown-progress), color-mix(in srgb, var(--live-color) 12%, #e8e9e5) 0);
+}
+.inbound-countdown::before { content: ""; position: absolute; inset: 5px; z-index: -1; border-radius: inherit; background: rgba(255,255,255,.94); }
+.inbound-countdown strong { margin: -1px 7px 0 0; font-size: 18px; line-height: 1; }
+.inbound-countdown span { position: absolute; right: 12px; bottom: 13px; font-size: 8px; font-weight: 800; }
+.inbound-live.received .inbound-countdown strong,
+.inbound-live.checking .inbound-countdown strong { margin: 0; font-size: 19px; }
+.inbound-live.received .inbound-countdown span,
+.inbound-live.checking .inbound-countdown span { display: none; }
+@keyframes inbound-live-in { from { opacity: 0; transform: translateY(7px) scale(.99); } }
+@keyframes inbound-live-pulse { 75%, 100% { box-shadow: 0 0 0 8px transparent; } }
+@keyframes inbound-scan { 0%, 52% { transform: translateX(-110%); } 88%, 100% { transform: translateX(110%); } }
 .inbound-suggestions { margin-top: 22px; }
 .inbound-section-head { margin-bottom: 10px; }
 .suggestion-list { display: grid; gap: 10px; }
@@ -1689,6 +1736,13 @@ textarea { height: auto; padding: 10px 12px; resize: vertical; min-height: 64px;
   .inbound-alias-actions .btn { width: 100%; justify-content: center; }
 
   .inbound-privacy-note { margin-top: 11px; font-size: 11px; line-height: 1.4; }
+  .inbound-live { gap: 10px; margin-top: 11px; padding: 11px 12px; border-radius: 15px; }
+  .inbound-live-icon { width: 39px; height: 39px; border-radius: 12px; }
+  .inbound-live-copy h3 { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+  .inbound-live-copy p { font-size: 10.5px; }
+  .inbound-countdown { width: 46px; height: 46px; }
+  .inbound-countdown strong { font-size: 16px; }
+  .inbound-countdown span { right: 10px; bottom: 11px; }
   .inbound-suggestions { margin-top: 16px; }
   .inbound-section-head { align-items: center; gap: 10px; margin-bottom: 8px; padding-inline: 2px; }
   .inbound-section-head p { font-size: 11px; }

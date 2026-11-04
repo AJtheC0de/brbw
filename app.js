@@ -2554,7 +2554,10 @@
   const inboundAliasInput = $("#inboundAliasInput"), inboundDomainSuffix = $("#inboundDomainSuffix");
   const saveInboundAliasBtn = $("#saveInboundAliasBtn"), cancelInboundAliasBtn = $("#cancelInboundAliasBtn");
   const inboundBadge = $("#inboundBadge");
+  const inboundLive = $("#inboundLive"), inboundCountdown = $("#inboundCountdown");
   let inboundSettings = null, inboundSuggestions = [], inboundLastFocus = null;
+  let inboundPollTimeout = null, inboundCountdownTimer = null, inboundPollGeneration = 0;
+  const INBOUND_POLL_SECONDS = 6;
 
   const INBOUND_EVENT_LABELS = {
     confirmation: "Eingangsbestätigung",
@@ -2573,6 +2576,99 @@
     $("#inboundBtn").setAttribute("aria-label", count ? `E-Mail Inbox, ${count} offene Vorschläge` : "E-Mail Inbox");
   }
 
+  function renderInboundLive(mode, seconds = INBOUND_POLL_SECONDS, receivedCount = 0) {
+    inboundLive.hidden = false;
+    inboundLive.className = `inbound-live ${mode}`.trim();
+    const title = $("#inboundLiveTitle"), text = $("#inboundLiveText");
+    const value = inboundCountdown.querySelector("strong");
+    const suffix = inboundCountdown.querySelector("span");
+    if (mode === "received") {
+      title.textContent = "E-Mail empfangen";
+      text.textContent = `${receivedCount === 1 ? "Eine neue Änderung wurde" : `${receivedCount} neue Änderungen wurden`} erkannt und unten ergänzt.`;
+      value.textContent = "✓";
+      suffix.textContent = "";
+      inboundCountdown.style.setProperty("--countdown-progress", "360deg");
+      inboundCountdown.setAttribute("aria-label", "E-Mail empfangen");
+      return;
+    }
+    if (mode === "checking") {
+      title.textContent = "Postfach wird geprüft …";
+      text.textContent = "Jobply sucht nach neuen weitergeleiteten E-Mails.";
+      value.textContent = "…";
+      suffix.textContent = "";
+      inboundCountdown.style.setProperty("--countdown-progress", "360deg");
+      inboundCountdown.setAttribute("aria-label", "Postfach wird jetzt geprüft");
+      return;
+    }
+    if (mode === "retry") {
+      title.textContent = "Verbindung wird erneut geprüft";
+      text.textContent = "Der nächste Versuch startet automatisch.";
+      value.textContent = "↻";
+      suffix.textContent = "";
+      inboundCountdown.style.setProperty("--countdown-progress", "90deg");
+      inboundCountdown.setAttribute("aria-label", "Verbindung wird erneut geprüft");
+      return;
+    }
+    title.textContent = "Warte auf eine E-Mail";
+    text.textContent = `Nächste automatische Prüfung in ${seconds} ${seconds === 1 ? "Sekunde" : "Sekunden"}.`;
+    value.textContent = String(seconds);
+    suffix.textContent = "s";
+    inboundCountdown.style.setProperty("--countdown-progress", `${(seconds / INBOUND_POLL_SECONDS) * 360}deg`);
+    inboundCountdown.setAttribute("aria-label", `Nächste Prüfung in ${seconds} Sekunden`);
+  }
+
+  function stopInboundPolling({ hide = false } = {}) {
+    inboundPollGeneration += 1;
+    if (inboundPollTimeout) clearTimeout(inboundPollTimeout);
+    if (inboundCountdownTimer) clearInterval(inboundCountdownTimer);
+    inboundPollTimeout = null;
+    inboundCountdownTimer = null;
+    if (hide) inboundLive.hidden = true;
+  }
+
+  function scheduleInboundPolling(delay = INBOUND_POLL_SECONDS * 1000) {
+    stopInboundPolling();
+    if (!inboundDialog.classList.contains("open") || !inboundSettings?.enabled || document.hidden) {
+      if (!inboundSettings?.enabled) inboundLive.hidden = true;
+      return;
+    }
+    const generation = inboundPollGeneration;
+    let seconds = Math.max(1, Math.ceil(delay / 1000));
+    renderInboundLive("waiting", Math.min(INBOUND_POLL_SECONDS, seconds));
+    inboundCountdownTimer = setInterval(() => {
+      if (generation !== inboundPollGeneration) return;
+      seconds = Math.max(0, seconds - 1);
+      if (seconds > 0) renderInboundLive("waiting", Math.min(INBOUND_POLL_SECONDS, seconds));
+      else {
+        clearInterval(inboundCountdownTimer);
+        inboundCountdownTimer = null;
+        renderInboundLive("checking");
+      }
+    }, 1000);
+    inboundPollTimeout = setTimeout(async () => {
+      if (generation !== inboundPollGeneration || !currentUser?.id) return;
+      renderInboundLive("checking");
+      const previousIds = new Set(inboundSuggestions.map((item) => item.id));
+      const expectedEpoch = authEpoch;
+      const expectedUserId = currentUser.id;
+      try {
+        await loadInboundSuggestions({ quiet: true, expectedEpoch, expectedUserId });
+      } catch {
+        if (generation !== inboundPollGeneration) return;
+        renderInboundLive("retry");
+        inboundPollTimeout = setTimeout(() => scheduleInboundPolling(), 1800);
+        return;
+      }
+      if (generation !== inboundPollGeneration || !inboundDialog.classList.contains("open")) return;
+      const receivedCount = inboundSuggestions.filter((item) => !previousIds.has(item.id)).length;
+      if (receivedCount) {
+        renderInboundLive("received", INBOUND_POLL_SECONDS, receivedCount);
+        toast(receivedCount === 1 ? "Neue E-Mail erkannt" : `${receivedCount} neue E-Mails erkannt`);
+        inboundPollTimeout = setTimeout(() => scheduleInboundPolling(), 2300);
+      } else scheduleInboundPolling();
+    }, delay);
+  }
+
   function renderInboundSettings(error = "") {
     const configured = Boolean(inboundSettings?.configured);
     const enabled = Boolean(inboundSettings?.enabled);
@@ -2587,6 +2683,7 @@
     copyInboundAddressBtn.disabled = !inboundSettings?.email;
     editInboundAliasBtn.disabled = !configured || Boolean(error);
     inboundDomainSuffix.textContent = `@${inboundSettings?.domain || "jobply.app"}`;
+    if (!enabled) stopInboundPolling({ hide: true });
   }
 
   function closeInboundAliasEditor() {
@@ -2698,7 +2795,7 @@
   }
 
   async function refreshInbound({ quiet = false } = {}) {
-    if (!currentUser) return;
+    if (!currentUser) return false;
     const expectedEpoch = authEpoch;
     const expectedUserId = currentUser.id;
     try {
@@ -2706,20 +2803,47 @@
         loadInboundSettings(expectedEpoch, expectedUserId),
         loadInboundSuggestions({ quiet, expectedEpoch, expectedUserId }),
       ]);
+      return true;
     } catch (error) {
       if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
       renderInboundSettings("E-Mail-Assistent gerade nicht verfügbar");
       if (!quiet) renderInboundSuggestions({ error: "Bitte zuerst Datenbank, Edge Functions und Resend konfigurieren." });
+      return false;
     }
   }
 
-  function openInboundDialog() {
+  async function manuallyRefreshInbound() {
+    stopInboundPolling();
+    const previousIds = new Set(inboundSuggestions.map((item) => item.id));
+    const button = $("#refreshInboundBtn");
+    button.disabled = true;
+    renderInboundLive("checking");
+    const refreshed = await refreshInbound({ quiet: true });
+    button.disabled = false;
+    if (!inboundDialog.classList.contains("open")) return;
+    if (!refreshed) {
+      renderInboundLive("retry");
+      inboundPollTimeout = setTimeout(() => scheduleInboundPolling(), 1800);
+      return;
+    }
+    if (!inboundSettings?.enabled) return stopInboundPolling({ hide: true });
+    const receivedCount = inboundSuggestions.filter((item) => !previousIds.has(item.id)).length;
+    if (receivedCount) {
+      renderInboundLive("received", INBOUND_POLL_SECONDS, receivedCount);
+      inboundPollTimeout = setTimeout(() => scheduleInboundPolling(), 2300);
+    } else scheduleInboundPolling();
+  }
+
+  async function openInboundDialog() {
     inboundLastFocus = document.activeElement;
     inboundOverlay.hidden = false;
     inboundDialog.setAttribute("aria-hidden", "false");
     document.body.style.overflow = "hidden";
     requestAnimationFrame(() => { inboundOverlay.classList.add("show"); inboundDialog.classList.add("open"); });
-    refreshInbound();
+    renderInboundLive("checking");
+    const refreshed = await refreshInbound();
+    if (refreshed && inboundSettings?.enabled) scheduleInboundPolling();
+    else if (!inboundSettings?.enabled) stopInboundPolling({ hide: true });
     setTimeout(() => $("[data-close-inbound]", inboundDialog)?.focus({ preventScroll: true }), 100);
   }
 
@@ -2728,6 +2852,7 @@
     inboundDialog.classList.remove("open");
     inboundOverlay.classList.remove("show");
     inboundDialog.setAttribute("aria-hidden", "true");
+    stopInboundPolling({ hide: true });
     document.body.style.overflow = "";
     setTimeout(() => {
       if (!inboundDialog.classList.contains("open")) inboundOverlay.hidden = true;
@@ -2753,6 +2878,8 @@
     }
     inboundSettings = data.data;
     renderInboundSettings();
+    if (next) scheduleInboundPolling();
+    else stopInboundPolling({ hide: true });
     toast(next ? "E-Mail-Automatisierung aktiviert" : "E-Mail-Automatisierung deaktiviert");
   }
 
@@ -3554,8 +3681,13 @@
     if (!event.currentTarget.contains(event.relatedTarget)) scheduleAiBriefCarousel();
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) stopAiBriefCarousel();
-    else scheduleAiBriefCarousel();
+    if (document.hidden) {
+      stopAiBriefCarousel();
+      stopInboundPolling();
+    } else {
+      scheduleAiBriefCarousel();
+      if (inboundDialog.classList.contains("open") && inboundSettings?.enabled) scheduleInboundPolling();
+    }
   });
 
   inboundOverlay.addEventListener("click", closeInboundDialog);
@@ -3566,7 +3698,7 @@
     if (event.target.closest("[data-accept-inbound]")) reviewInboundSuggestion(card, true);
     else if (event.target.closest("[data-reject-inbound]")) reviewInboundSuggestion(card, false);
   });
-  $("#refreshInboundBtn").addEventListener("click", () => refreshInbound());
+  $("#refreshInboundBtn").addEventListener("click", manuallyRefreshInbound);
   toggleInboundBtn.addEventListener("click", toggleInbound);
   editInboundAliasBtn.addEventListener("click", openInboundAliasEditor);
   cancelInboundAliasBtn.addEventListener("click", closeInboundAliasEditor);
