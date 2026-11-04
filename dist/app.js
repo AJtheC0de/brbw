@@ -56,6 +56,15 @@
   const AI_BRIEF_INTERVAL = 5200;
   let aiBriefTimer = null;
   let aiBriefIndex = 0;
+  const MAGIC_LOADING_PHASES = [
+    "Anzeige durchleuchten …",
+    "Anforderungen entwirren …",
+    "Jobdetails marinieren …",
+    "Puzzleteile zusammensetzen …",
+    "Profil feinpolieren …",
+  ];
+  let magicLoadingTimer = null;
+  let magicLoadingPhase = 0;
   let billingState = { premium: false, used: 0, remaining: 3, status: "inactive", hasCustomer: false };
   function detectBillingCurrency() {
     let region = "";
@@ -1994,9 +2003,28 @@
   }
 
   function setMagicStatus(message, kind = "") {
+    if (kind !== "loading" && magicLoadingTimer) {
+      clearInterval(magicLoadingTimer);
+      magicLoadingTimer = null;
+    }
     magicImportStatus.textContent = message;
     magicImportStatus.className = `magic-import-status ${kind}`.trim();
     magicImport.classList.toggle("loading", kind === "loading");
+  }
+
+  function stopMagicLoadingPhases() {
+    if (magicLoadingTimer) clearInterval(magicLoadingTimer);
+    magicLoadingTimer = null;
+  }
+
+  function startMagicLoadingPhases() {
+    stopMagicLoadingPhases();
+    magicLoadingPhase = 0;
+    setMagicStatus(MAGIC_LOADING_PHASES[magicLoadingPhase], "loading");
+    magicLoadingTimer = setInterval(() => {
+      magicLoadingPhase = (magicLoadingPhase + 1) % MAGIC_LOADING_PHASES.length;
+      setMagicStatus(MAGIC_LOADING_PHASES[magicLoadingPhase], "loading");
+    }, 1650);
   }
 
   function normalizedWebUrl(value) {
@@ -2027,7 +2055,7 @@
     jobImportUrl.value = url;
     runMagicImportBtn.disabled = true;
     $("#pasteJobUrlBtn").disabled = true;
-    setMagicStatus("Stellenanzeige wird gelesen und mit OpenAI ausgewertet …", "loading");
+    startMagicLoadingPhases();
     const operation = pendingOperationKey(`magic-import.${currentUser.id}`);
     try {
       const { data, error } = await db.functions.invoke("magic-import", {
@@ -2083,6 +2111,7 @@
       if (error.code === "ai_quota_exceeded") openBillingModal(error.publicMessage);
       setMagicStatus(error.publicMessage || "Magic Import ist gerade nicht verfügbar.", "error");
     } finally {
+      stopMagicLoadingPhases();
       if (!isActiveAuthContext(expectedEpoch, expectedUserId) || state.draft !== expectedDraft) return;
       runMagicImportBtn.disabled = false;
       $("#pasteJobUrlBtn").disabled = false;
