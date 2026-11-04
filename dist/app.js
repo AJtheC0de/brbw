@@ -950,6 +950,7 @@
           <div class="stat-label"><i></i>${t.label}</div>
           <div class="stat-value">0</div>
           <div class="stat-sub"></div>
+          ${t.key === "total" ? `<button type="button" class="stat-export" data-total-export aria-label="Gesamtübersicht als PNG exportieren">${ICONS.download}<span>Export</span></button>` : ""}
         </div>`).join("");
       statsBuilt = true;
     }
@@ -3618,7 +3619,12 @@
     $("#confirmDeleteAccountBtn").disabled = true;
     $("#deleteAccountMessage").textContent = "";
     $("#settingsAccountMessage").textContent = "Profil wird geladen…";
+    $("#settingsEmailMessage").textContent = "";
+    $("#settingsPasswordMessage").textContent = "";
     $("#settingsEmail").value = currentUser.email || "";
+    $("#settingsPassword").value = "";
+    $("#settingsPasswordConfirm").value = "";
+    updateSettingsPasswordFeedback();
     updateNavIdentity();
     void refreshBillingStatus();
     try {
@@ -3652,6 +3658,9 @@
     setTimeout(() => { if (!settingsOpen) settingsOverlay.hidden = true; }, 250);
     document.body.style.overflow = drawer.classList.contains("open") ? "hidden" : "";
     deleteAccountInput.value = "";
+    $("#settingsPassword").value = "";
+    $("#settingsPasswordConfirm").value = "";
+    updateSettingsPasswordFeedback();
   }
 
   async function saveAccountSettings(event) {
@@ -3660,7 +3669,6 @@
     const button = $("#saveAccountSettingsBtn");
     const message = $("#settingsAccountMessage");
     const expectedUserId = currentUser.id;
-    const nextEmail = $("#settingsEmail").value.trim().toLowerCase();
     const goal = Math.max(1, Math.min(50, Number($("#settingsGoal").value) || 10));
     button.disabled = true;
     message.textContent = "Wird gespeichert…";
@@ -3677,22 +3685,95 @@
       };
       const { error: profileError } = await db.from("user_profiles").upsert(profile, { onConflict: "user_id" });
       if (profileError) throw profileError;
-      let emailNotice = "";
-      if (nextEmail && nextEmail !== String(currentUser.email || "").toLowerCase()) {
-        const { data, error } = await db.auth.updateUser({ email: nextEmail });
-        if (error) throw error;
-        if (data?.user) currentUser = data.user;
-        emailNotice = " Bestätige die neue E-Mail-Adresse über den zugesandten Link.";
-      }
       if (currentUser?.id !== expectedUserId) return;
       userProfile = { ...(userProfile || {}), ...profile };
       setLanguage(profile.preferred_language);
       updateNavIdentity(profile);
       renderAiBrief();
-      message.textContent = `Gespeichert.${emailNotice}`;
-      toast("Account aktualisiert");
+      message.textContent = "Profil gespeichert.";
+      toast("Profil aktualisiert");
     } catch (error) {
       message.textContent = error?.message || "Änderungen konnten nicht gespeichert werden.";
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function changeAccountEmail(event) {
+    event.preventDefault();
+    if (!currentUser?.id) return;
+    const input = $("#settingsEmail"), button = $("#changeEmailBtn"), message = $("#settingsEmailMessage");
+    const nextEmail = input.value.trim().toLowerCase();
+    if (!nextEmail || !input.checkValidity()) {
+      message.textContent = "Bitte gib eine gültige E-Mail-Adresse ein.";
+      return input.focus();
+    }
+    if (nextEmail === String(currentUser.email || "").toLowerCase()) {
+      message.textContent = "Das ist bereits deine aktuelle E-Mail-Adresse.";
+      return;
+    }
+    button.disabled = true;
+    message.textContent = "Bestätigungslink wird gesendet…";
+    try {
+      const { data, error } = await db.auth.updateUser({ email: nextEmail });
+      if (error) throw error;
+      if (data?.user) currentUser = data.user;
+      message.textContent = `Bestätige ${nextEmail} über den zugesandten Link. Bis dahin bleibt deine bisherige Adresse aktiv.`;
+      toast("Bestätigungslink gesendet");
+    } catch (error) {
+      const detail = String(error?.message || "").toLowerCase();
+      message.textContent = detail.includes("already") || detail.includes("registered")
+        ? "Diese E-Mail-Adresse wird bereits verwendet."
+        : detail.includes("rate")
+          ? "Zu viele Versuche. Bitte warte kurz und versuche es erneut."
+          : "Die E-Mail-Adresse konnte nicht geändert werden.";
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function updateSettingsPasswordFeedback() {
+    const password = $("#settingsPassword")?.value || "";
+    const confirmation = $("#settingsPasswordConfirm")?.value || "";
+    const meter = $("#settingsPasswordStrength"), hint = $("#settingsPasswordHint");
+    if (!meter || !hint) return;
+    const assessment = passwordAssessment(password);
+    meter.dataset.score = String(assessment.score);
+    if (!password) hint.textContent = "12 Zeichen mit Gross-/Kleinbuchstaben, Zahl und Sonderzeichen";
+    else if (!assessment.strong) hint.textContent = `Noch nötig: ${assessment.missing.join(", ")}`;
+    else if (confirmation && confirmation !== password) hint.textContent = "Die Passwörter stimmen noch nicht überein.";
+    else hint.textContent = confirmation ? "Stark und bestätigt." : "Starkes Passwort – bitte noch wiederholen.";
+  }
+
+  async function changeAccountPassword(event) {
+    event.preventDefault();
+    if (!currentUser?.id) return;
+    const password = $("#settingsPassword").value;
+    const confirmation = $("#settingsPasswordConfirm").value;
+    const button = $("#changePasswordBtn"), message = $("#settingsPasswordMessage");
+    if (!passwordAssessment(password).strong) {
+      message.textContent = "Bitte erfülle alle Anforderungen für ein starkes Passwort.";
+      return $("#settingsPassword").focus();
+    }
+    if (password !== confirmation) {
+      message.textContent = "Die beiden Passwörter stimmen nicht überein.";
+      return $("#settingsPasswordConfirm").focus();
+    }
+    button.disabled = true;
+    message.textContent = "Passwort wird sicher aktualisiert…";
+    try {
+      const { error } = await db.auth.updateUser({ password });
+      if (error) throw error;
+      $("#settingsPassword").value = "";
+      $("#settingsPasswordConfirm").value = "";
+      updateSettingsPasswordFeedback();
+      message.textContent = "Dein Passwort wurde geändert.";
+      toast("Passwort aktualisiert");
+    } catch (error) {
+      const detail = String(error?.message || "").toLowerCase();
+      message.textContent = detail.includes("reauth") || detail.includes("session")
+        ? "Bitte melde dich neu an und versuche die Passwortänderung erneut."
+        : "Das Passwort konnte nicht geändert werden.";
     } finally {
       button.disabled = false;
     }
@@ -3914,12 +3995,22 @@
   $("#settingsCloseBtn").addEventListener("click", closeSettings);
   settingsOverlay.addEventListener("click", closeSettings);
   $("#accountSettingsForm").addEventListener("submit", saveAccountSettings);
+  $("#emailSettingsForm").addEventListener("submit", changeAccountEmail);
+  $("#passwordSettingsForm").addEventListener("submit", changeAccountPassword);
+  $("#settingsPassword").addEventListener("input", updateSettingsPasswordFeedback);
+  $("#settingsPasswordConfirm").addEventListener("input", updateSettingsPasswordFeedback);
+  $$("[data-settings-target]").forEach((button) => button.addEventListener("click", () => {
+    document.getElementById(button.dataset.settingsTarget)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
   $("#settingsBackupBtn").addEventListener("click", () => handleAction("export-json"));
   $("#settingsCsvBtn").addEventListener("click", () => handleAction("export-csv"));
   $("#settingsStatusCardBtn").addEventListener("click", () => { closeSettings(); shareCardForMonth("all"); });
   $("#settingsImportBtn").addEventListener("click", () => { closeSettings(); openImportDialog(); });
   $("#openPremiumStatsBtn").addEventListener("click", () => { closeSettings(); setView("insights"); });
   $("#settingsSignoutBtn").addEventListener("click", () => { closeSettings(); db.auth.signOut(); });
+  els.stats.addEventListener("click", (event) => {
+    if (event.target.closest("[data-total-export]")) shareCardForMonth("all");
+  });
   window.addEventListener("pageshow", () => {
     if (currentUser?.id) void refreshBillingStatus();
   });
@@ -4840,6 +4931,8 @@
     tip.textContent = "";
     $("#userEmail").textContent = "";
     $("#settingsAccountMessage").textContent = "";
+    $("#settingsEmailMessage").textContent = "";
+    $("#settingsPasswordMessage").textContent = "";
     $("#deleteAccountMessage").textContent = "";
     deleteAccountConfirm.hidden = true;
     $("#drawerTitle").textContent = "";

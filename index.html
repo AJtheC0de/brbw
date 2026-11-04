@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="manifest" href="icons/site.webmanifest">
   <link rel="preload" href="fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=20261104-13">
+  <link rel="stylesheet" href="styles.css?v=20261104-14">
 </head>
 <body>
   <div class="bg-glow" aria-hidden="true"></div>
@@ -421,10 +421,16 @@
         <span><small id="billingPlanTag">3 GRATIS-KI-NUTZUNGEN</small><strong>Jobply Premium</strong><em id="billingPlanSummary">Nutzungsstand wird geladen…</em></span>
         <svg class="premium-arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
       </button>
-      <section class="settings-section">
-        <div class="settings-section-title"><span>Account-Einstellungen</span><small>Persönliche Angaben</small></div>
+
+      <nav class="settings-jump-nav" aria-label="Einstellungsbereiche">
+        <button type="button" data-settings-target="settingsProfile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg><span>Profil</span></button>
+        <button type="button" data-settings-target="settingsData"><svg viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg><span>Daten</span></button>
+        <button type="button" data-settings-target="settingsPrivacy"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.7-2.8 8-7 10-4.2-2-7-5.3-7-10V6l7-3Z"/><path d="m9 12 2 2 4-4"/></svg><span>Privatsphäre</span></button>
+      </nav>
+
+      <section class="settings-section settings-card-section" id="settingsProfile">
+        <div class="settings-section-title settings-title-with-icon"><span class="settings-section-icon profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg></span><span><strong>Profil &amp; Konto</strong><small>Persönliche Angaben und Anmeldedaten</small></span></div>
         <form class="settings-form" id="accountSettingsForm">
-          <label class="field field-wide"><span>E-Mail-Adresse</span><input id="settingsEmail" type="email" autocomplete="email"></label>
           <div class="field-grid">
             <label class="field"><span>Name</span><input id="settingsName" maxlength="80" autocomplete="name" placeholder="Dein Name"></label>
             <label class="field"><span>Zielrolle</span><input id="settingsRole" maxlength="120" placeholder="z.B. Product Designer"></label>
@@ -434,6 +440,29 @@
           </div>
           <div class="settings-form-foot"><span id="settingsAccountMessage" role="status"></span><button class="btn primary" id="saveAccountSettingsBtn" type="submit">Änderungen speichern</button></div>
         </form>
+
+        <div class="settings-security-card">
+          <div class="settings-subcard-head"><span class="settings-section-icon security"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span><span><strong>Login &amp; Sicherheit</strong><small>E-Mail oder Passwort sicher ändern</small></span></div>
+          <form class="settings-security-form" id="emailSettingsForm">
+            <label class="field"><span>E-Mail-Adresse</span><input id="settingsEmail" type="email" autocomplete="email" required placeholder="name@beispiel.ch"></label>
+            <button class="btn ghost" id="changeEmailBtn" type="submit">E-Mail ändern</button>
+            <span class="settings-inline-message" id="settingsEmailMessage" role="status"></span>
+          </form>
+          <div class="settings-security-divider"></div>
+          <form class="settings-security-form password" id="passwordSettingsForm">
+            <div class="field-grid">
+              <label class="field"><span>Neues Passwort</span><input id="settingsPassword" type="password" minlength="12" autocomplete="new-password" required placeholder="Mindestens 12 Zeichen"></label>
+              <label class="field"><span>Passwort wiederholen</span><input id="settingsPasswordConfirm" type="password" minlength="12" autocomplete="new-password" required placeholder="Erneut eingeben"></label>
+            </div>
+            <div class="settings-password-feedback">
+              <span class="settings-password-meter" id="settingsPasswordStrength" data-score="0" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+              <small id="settingsPasswordHint">12 Zeichen mit Gross-/Kleinbuchstaben, Zahl und Sonderzeichen</small>
+            </div>
+            <button class="btn ghost" id="changePasswordBtn" type="submit">Passwort aktualisieren</button>
+            <span class="settings-inline-message" id="settingsPasswordMessage" role="status"></span>
+          </form>
+        </div>
+
         <div class="settings-cv-card">
           <span class="settings-action-icon"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h5M10 13h5M10 17h5"/></svg></span>
           <span><strong>Lebenslauf für KI-Vorbereitung</strong><small id="settingsCvStatus">Noch kein Lebenslauf hinterlegt</small></span>
@@ -441,19 +470,23 @@
         </div>
       </section>
 
-      <section class="settings-section">
-        <div class="settings-section-title"><span>Daten</span><small>Statistiken, Import & Backup</small></div>
-        <div class="settings-action-list">
-          <button type="button" id="openPremiumStatsBtn"><span class="settings-action-icon"><svg viewBox="0 0 24 24"><path d="M4 18V9M10 18V4M16 18v-6M22 18H2"/></svg></span><span><strong>Statistiken</strong><small>Trends, Erfolgsquote und Reaktionszeiten</small></span><i>→</i></button>
+      <section class="settings-section settings-card-section" id="settingsData">
+        <div class="settings-section-title settings-title-with-icon"><span class="settings-section-icon data"><svg viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg></span><span><strong>Daten &amp; Export</strong><small>Übersicht, Statistiken und Sicherungen</small></span></div>
+        <button type="button" class="settings-status-export-card" id="settingsStatusCardBtn">
+          <span class="status-export-art" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M8 15V9m4 6V7m4 8v-3"/></svg></span>
+          <span><small>DEIN BEWERBUNGSSTAND</small><strong data-i18n="totalCard">Gesamtübersicht als Karte</strong><em data-i18n="totalCardHint">Deinen kompletten Bewerbungsstand als schönes PNG exportieren</em></span>
+          <b>PNG <svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5"/><path d="M5 21h14"/></svg></b>
+        </button>
+        <div class="settings-action-list settings-action-grid">
+          <button type="button" id="openPremiumStatsBtn"><span class="settings-action-icon"><svg viewBox="0 0 24 24"><path d="M4 18V9M10 18V4M16 18v-6M22 18H2"/></svg></span><span><strong>Statistiken</strong><small>Trends und Erfolgsquote</small></span><i>→</i></button>
           <button type="button" id="settingsBackupBtn"><span class="settings-action-icon"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2"/></svg></span><span><strong>JSON-Backup speichern</strong><small>Vollständige Sicherung herunterladen</small></span><i>→</i></button>
           <button type="button" id="settingsImportBtn"><span class="settings-action-icon"><svg viewBox="0 0 24 24"><path d="M12 21V9M7 14l5-5 5 5"/><path d="M5 3h14a2 2 0 0 1 2 2v3M3 8V5a2 2 0 0 1 2-2"/></svg></span><span><strong>Backup importieren</strong><small>CSV oder JSON sicher einlesen</small></span><i>→</i></button>
           <button type="button" id="settingsCsvBtn"><span class="settings-action-icon"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v4h4M9 12h6M9 16h6"/></svg></span><span><strong>CSV exportieren</strong><small>Für Excel oder deine Ablage</small></span><i>→</i></button>
-          <button type="button" id="settingsStatusCardBtn"><span class="settings-action-icon status-card-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M8 15V9m4 6V7m4 8v-3"/></svg></span><span><strong data-i18n="totalCard">Gesamtübersicht als Karte</strong><small data-i18n="totalCardHint">Deinen kompletten Bewerbungsstand als schönes PNG exportieren</small></span><i>→</i></button>
         </div>
       </section>
 
-      <section class="settings-section">
-        <div class="settings-section-title"><span>Datenschutz &amp; KI</span><small>Du entscheidest, was an die KI geht</small></div>
+      <section class="settings-section settings-card-section" id="settingsPrivacy">
+        <div class="settings-section-title settings-title-with-icon"><span class="settings-section-icon privacy"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.7-2.8 8-7 10-4.2-2-7-5.3-7-10V6l7-3Z"/><path d="m9 12 2 2 4-4"/></svg></span><span><strong>Datenschutz &amp; KI</strong><small>Du entscheidest, was verarbeitet wird</small></span></div>
         <div class="settings-consent-list">
           <label class="settings-consent">
             <input id="aiConsentInput" type="checkbox">
@@ -472,8 +505,8 @@
         <p class="settings-legal"><a href="datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung</a><span aria-hidden="true">·</span><a href="nutzungsbedingungen.html" target="_blank" rel="noopener">Nutzungsbedingungen</a><span aria-hidden="true">·</span><a href="impressum.html" target="_blank" rel="noopener">Impressum</a></p>
       </section>
 
-      <section class="settings-section">
-        <div class="settings-section-title"><span>Sitzung</span></div>
+      <section class="settings-section settings-session-section">
+        <div class="settings-section-title"><span>Sitzung</span><small>Sicher auf diesem Gerät</small></div>
         <button class="settings-signout" id="settingsSignoutBtn" type="button"><span id="userEmail"></span><strong>Abmelden</strong></button>
       </section>
 
@@ -916,7 +949,7 @@
 
   <script src="vendor/supabase-2.102.0.min.js"
     integrity="sha384-1qxdq7qui0E5OGQx7KlSCCpPydLIt8lgUjqM3jGxWLXq9AIGC661VIvU/NPT6BQP"></script>
-  <script src="app.js?v=20261104-12"></script>
+  <script src="app.js?v=20261104-13"></script>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=jobplyTurnstileReady&amp;render=explicit" async defer></script>
 </body>
 </html>
