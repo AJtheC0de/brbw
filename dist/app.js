@@ -3835,7 +3835,7 @@
       action: "auth",
       theme: "light",
       size: "flexible",
-      appearance: "interaction-only",
+      appearance: "always",
       "refresh-expired": "auto",
       callback: (token) => { authCaptchaToken = token; authTurnstileRetries = 0; authStatus(""); },
       "expired-callback": () => { authCaptchaToken = ""; },
