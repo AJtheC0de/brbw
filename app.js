@@ -8,14 +8,22 @@
   const SEED_FIX_VERSION = "2";
   const VIEW_KEY = "bwrb.view";
   const PRIVACY_KEY = "bwrb.privacyMode";
+  const ANALYTICS_CONSENT_KEY = "jobply.analytics-consent.v1";
+  const ANALYTICS_CONSENT_VERSION = "2026-11-04";
+  const LANGUAGE_KEY = "jobply.language.v1";
+  const SUPPORTED_LANGUAGES = ["de", "en", "fr", "es", "sv"];
+  const LANGUAGE_LOCALES = { de: "de-CH", en: "en-GB", fr: "fr-CH", es: "es-ES", sv: "sv-SE" };
   const MONTH_LAYOUT_KEY = "bwrb.monthLayout";
   const ONBOARDING_RELEASE_AT = Date.parse("2026-10-22T23:20:00.000Z");
-  const PRIVACY_POLICY_VERSION = "2026-10-29-2";
+  const PRIVACY_POLICY_VERSION = "2026-11-04";
   const MIN_SIGNUP_PASSWORD = 12;
   const SUPABASE_URL = "https://coxmnerqoaclawbbgipx.supabase.co";
   const SUPABASE_KEY = "sb_publishable_2oKHLoM5fCrNiQ1FCpvPig_0Ci3zISR";
   const API_GATEWAY_URL = "https://api.jobply.app";
   const TURNSTILE_SITE_KEY = "0x4AAAAAAFrkmnNv3j3ctvVE";
+  // Public PostHog project token (never use a PostHog personal API key here).
+  const POSTHOG_PROJECT_KEY = "phc_u9AH7yVj7wWoM55bVexekYWeh24nN43mmwPPytCHayGC";
+  const POSTHOG_API_HOST = "https://eu.i.posthog.com";
   const EDGE_FUNCTION_ROUTES = new Map([
     ["interview-prep", "/v1/interview-prep"],
     ["magic-import", "/v1/magic-import"],
@@ -38,6 +46,14 @@
       }
     }
     return window.fetch(input, init);
+  };
+
+  const VIEW_TRANSLATIONS = {
+    de: { list: ["Dashboard", "Deine Bewerbungen", "Alles an einem Ort – vom ersten Versand bis zum Angebot."], interviews: ["Interview Workspace", "Deine Gespräche", "Termine, Vorbereitung und Gesprächsnotizen an einem Ort."], insights: ["Analytics", "Deine Statistiken", "Trends, Erfolgsquoten und Fortschritt deiner Jobsuche."], addInterview: "Gespräch hinzufügen" },
+    en: { list: ["Dashboard", "Your applications", "Everything in one place – from first submission to offer."], interviews: ["Interview workspace", "Your interviews", "Appointments, preparation and notes in one place."], insights: ["Analytics", "Your statistics", "Trends, success rates and progress in your job search."], addInterview: "Add interview" },
+    fr: { list: ["Tableau de bord", "Tes candidatures", "Tout au même endroit – du premier envoi à l’offre."], interviews: ["Espace entretiens", "Tes entretiens", "Rendez-vous, préparation et notes au même endroit."], insights: ["Analyse", "Tes statistiques", "Tendances, taux de réussite et progression de ta recherche."], addInterview: "Ajouter un entretien" },
+    es: { list: ["Panel", "Tus solicitudes", "Todo en un solo lugar: desde el primer envío hasta la oferta."], interviews: ["Espacio de entrevistas", "Tus entrevistas", "Citas, preparación y notas en un solo lugar."], insights: ["Análisis", "Tus estadísticas", "Tendencias, tasas de éxito y progreso de tu búsqueda."], addInterview: "Añadir entrevista" },
+    sv: { list: ["Översikt", "Dina ansökningar", "Allt på ett ställe – från första ansökan till erbjudande."], interviews: ["Intervjuvy", "Dina intervjuer", "Tider, förberedelser och anteckningar på ett ställe."], insights: ["Analys", "Din statistik", "Trender, resultat och framsteg i jobbsökandet."], addInterview: "Lägg till intervju" },
   };
   clearLegacyApplicationStorage();
   const db = window.supabase?.createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -76,6 +92,83 @@
   }
 
   let billingCurrency = detectBillingCurrency();
+  let analyticsLoadPromise = null;
+  let analyticsActiveUserCaptured = false;
+
+  const UI_TRANSLATIONS = {
+    de: {
+      login: "Anmelden", register: "Registrieren", loginTitle: "Willkommen zurück.", signupTitle: "Konto erstellen.",
+      loginSubtitle: "Melde dich an und mach direkt weiter.", signupSubtitle: "In wenigen Schritten zu mehr Überblick.",
+      freeRegister: "Kostenlos registrieren", setupEyebrow: "Dein Setup", setupTitle: "Damit Jobply zu deinem Leben passt.",
+      setupIntro: "Fünf kurze Schritte helfen uns, Jobply persönlicher für dich zu machen.", stepLanguage: "Sprache", stepAbout: "Über dich",
+      stepSituation: "Deine Situation", stepGoal: "Dein Ziel", stepCv: "Lebenslauf", privateNote: "Alle Angaben sind freiwillig und nur für dich sichtbar.",
+      languageCount: "01 — Sprache", languageTitle: "Welche Sprache möchtest du verwenden?", languageCopy: "Du kannst sie später jederzeit in den Einstellungen ändern.",
+      languagePrivacy: "Vorausgewählt anhand deiner Browsersprache – ohne Standort- oder IP-Abfrage.",
+      aboutCount: "02 — Über dich", aboutTitle: "Wer bist du?", aboutCopy: "Ein bisschen Kontext reicht. Du kannst alles später noch ändern.",
+      nameQuestion: "Wie dürfen wir dich nennen?", namePlaceholder: "Vorname oder Spitzname (optional)", roleQuestion: "Welche Rolle suchst du?", rolePlaceholder: "z. B. Product Designer (optional)",
+      situationCount: "03 — Deine Situation", situationTitle: "Hast du aktuell einen Job?", situationCopy: "So können wir deine Jobsuche passend zu deiner Situation einordnen.",
+      employed: "Ja, ich bin angestellt", employedHint: "Ich suche aus einer bestehenden Stelle heraus.", unemployed: "Nein, aktuell nicht", unemployedHint: "Meine Jobsuche hat gerade Priorität.",
+      student: "Studium oder Ausbildung", studentHint: "Ich starte oder plane meinen Berufseinstieg.", other: "Etwas anderes", otherHint: "Ich möchte es nicht genauer angeben.",
+      goalCount: "04 — Dein Ziel", goalTitle: "Wie viele Bewerbungen möchtest du versenden?", goalCopy: "Ein realistisches Monatsziel hilft dir, Fortschritt sichtbar zu machen.",
+      applicationsMonth: "Bewerbungen pro Monat", applicationMonth: "Bewerbung pro Monat", optionalCount: "05 — Optional", cvTitle: "Bereit für dein nächstes Gespräch?",
+      cvCopy: "Mit deinem Lebenslauf erstellt Jobply später passendere Fragen und ehrliche Antwortvorschläge.", selectCv: "Lebenslauf auswählen", cvLimit: "PDF oder DOCX · maximal 10 MB",
+      cvPrivacy: "Privat gespeichert. An die KI wird dein Lebenslauf erst mit deiner ausdrücklichen Freigabe gesendet.", later: "Später", logout: "Abmelden", back: "Zurück", next: "Weiter", finish: "Setup abschließen",
+      workspace: "Dein Workspace", settings: "Einstellungen", languageSetting: "Sprache", languageSettingHint: "Darstellung der App", dashboardTitle: "Deine Bewerbungen",
+      dashboardSubtitle: "Alles an einem Ort – vom ersten Versand bis zum Angebot.", addApplication: "Neue Bewerbung", applications: "Bewerbungen", interviews: "Gespräche", statistics: "Statistiken", search: "Firma, Stelle oder Notiz suchen…",
+      totalCard: "Gesamtübersicht als Karte", totalCardHint: "Deinen kompletten Bewerbungsstand als schönes PNG exportieren",
+      analyticsTitle: "Hilfst du uns, Jobply besser zu machen?", analyticsCopy: "Mit deiner Erlaubnis zählen wir über PostHog nur, wie viele Nutzer Jobply monatlich aktiv verwenden. Keine Werbeprofile, keine Sitzungsaufzeichnung und keine Bewerbungsinhalte. Ohne Zustimmung wird PostHog nicht geladen.", analyticsPrivacy: "Mehr zum Datenschutz", analyticsReject: "Nicht erlauben", analyticsAccept: "Analyse erlauben",
+    },
+    en: {
+      login: "Sign in", register: "Register", loginTitle: "Welcome back.", signupTitle: "Create your account.", loginSubtitle: "Sign in and pick up where you left off.", signupSubtitle: "A few steps to a clearer job search.", freeRegister: "Register for free",
+      setupEyebrow: "Your setup", setupTitle: "Make Jobply fit your life.", setupIntro: "Five short steps make Jobply more personal.", stepLanguage: "Language", stepAbout: "About you", stepSituation: "Your situation", stepGoal: "Your goal", stepCv: "Résumé", privateNote: "All details are optional and visible only to you.",
+      languageCount: "01 — Language", languageTitle: "Which language would you like to use?", languageCopy: "You can change it anytime in settings.", languagePrivacy: "Preselected from your browser language – no location or IP lookup.",
+      aboutCount: "02 — About you", aboutTitle: "Who are you?", aboutCopy: "A little context is enough. You can change everything later.", nameQuestion: "What should we call you?", namePlaceholder: "First name or nickname (optional)", roleQuestion: "Which role are you looking for?", rolePlaceholder: "e.g. Product Designer (optional)",
+      situationCount: "03 — Your situation", situationTitle: "Are you currently employed?", situationCopy: "This helps us tailor your job search to your situation.", employed: "Yes, I’m employed", employedHint: "I’m searching while currently employed.", unemployed: "No, not currently", unemployedHint: "My job search is my priority right now.", student: "Studying or training", studentHint: "I’m starting or planning my career.", other: "Something else", otherHint: "I’d rather not specify.",
+      goalCount: "04 — Your goal", goalTitle: "How many applications would you like to send?", goalCopy: "A realistic monthly goal makes progress visible.", applicationsMonth: "applications per month", applicationMonth: "application per month", optionalCount: "05 — Optional", cvTitle: "Ready for your next interview?", cvCopy: "Your résumé helps Jobply create better questions and honest answer suggestions.", selectCv: "Choose résumé", cvLimit: "PDF or DOCX · max. 10 MB", cvPrivacy: "Stored privately. Your résumé is sent to AI only with your explicit permission.", later: "Later", logout: "Sign out", back: "Back", next: "Next", finish: "Finish setup",
+      workspace: "Your workspace", settings: "Settings", languageSetting: "Language", languageSettingHint: "App display language", dashboardTitle: "Your applications", dashboardSubtitle: "Everything in one place – from first submission to offer.", addApplication: "New application", applications: "Applications", interviews: "Interviews", statistics: "Statistics", search: "Search company, role or note…", totalCard: "Full overview card", totalCardHint: "Export your complete application status as a beautiful PNG", analyticsTitle: "Help us make Jobply better?", analyticsCopy: "With your permission, PostHog only helps us count monthly active users. No advertising profiles, session recordings or application content. PostHog is not loaded without consent.", analyticsPrivacy: "Privacy details", analyticsReject: "Decline", analyticsAccept: "Allow analytics",
+    },
+    fr: {
+      login: "Se connecter", register: "S’inscrire", loginTitle: "Bon retour.", signupTitle: "Créer un compte.", loginSubtitle: "Connecte-toi et reprends là où tu t’es arrêté.", signupSubtitle: "Quelques étapes pour y voir plus clair.", freeRegister: "S’inscrire gratuitement",
+      setupEyebrow: "Ta configuration", setupTitle: "Adapte Jobply à ta vie.", setupIntro: "Cinq étapes rapides pour personnaliser Jobply.", stepLanguage: "Langue", stepAbout: "À propos", stepSituation: "Ta situation", stepGoal: "Ton objectif", stepCv: "CV", privateNote: "Toutes les informations sont facultatives et visibles uniquement par toi.",
+      languageCount: "01 — Langue", languageTitle: "Quelle langue souhaites-tu utiliser ?", languageCopy: "Tu peux la modifier à tout moment dans les paramètres.", languagePrivacy: "Présélectionnée selon la langue du navigateur – sans localisation ni adresse IP.",
+      aboutCount: "02 — À propos", aboutTitle: "Qui es-tu ?", aboutCopy: "Un peu de contexte suffit. Tu pourras tout modifier plus tard.", nameQuestion: "Comment pouvons-nous t’appeler ?", namePlaceholder: "Prénom ou surnom (facultatif)", roleQuestion: "Quel poste recherches-tu ?", rolePlaceholder: "p. ex. Product Designer (facultatif)",
+      situationCount: "03 — Ta situation", situationTitle: "As-tu actuellement un emploi ?", situationCopy: "Cela nous aide à adapter ta recherche à ta situation.", employed: "Oui, je travaille", employedHint: "Je cherche depuis mon poste actuel.", unemployed: "Non, pas actuellement", unemployedHint: "Ma recherche d’emploi est prioritaire.", student: "Études ou formation", studentHint: "Je commence ou prépare ma carrière.", other: "Autre situation", otherHint: "Je préfère ne pas préciser.",
+      goalCount: "04 — Ton objectif", goalTitle: "Combien de candidatures veux-tu envoyer ?", goalCopy: "Un objectif mensuel réaliste rend tes progrès visibles.", applicationsMonth: "candidatures par mois", applicationMonth: "candidature par mois", optionalCount: "05 — Facultatif", cvTitle: "Prêt pour ton prochain entretien ?", cvCopy: "Ton CV aide Jobply à proposer de meilleures questions et réponses.", selectCv: "Choisir le CV", cvLimit: "PDF ou DOCX · 10 Mo max.", cvPrivacy: "Stocké en privé. Ton CV n’est envoyé à l’IA qu’avec ton accord explicite.", later: "Plus tard", logout: "Se déconnecter", back: "Retour", next: "Suivant", finish: "Terminer",
+      workspace: "Ton espace", settings: "Paramètres", languageSetting: "Langue", languageSettingHint: "Langue d’affichage", dashboardTitle: "Tes candidatures", dashboardSubtitle: "Tout au même endroit – du premier envoi à l’offre.", addApplication: "Nouvelle candidature", applications: "Candidatures", interviews: "Entretiens", statistics: "Statistiques", search: "Rechercher entreprise, poste ou note…", totalCard: "Carte récapitulative", totalCardHint: "Exporter tout le suivi de tes candidatures en PNG", analyticsTitle: "Aide-nous à améliorer Jobply", analyticsCopy: "Avec ton accord, PostHog nous sert uniquement à compter les utilisateurs actifs mensuels. Aucun profil publicitaire, enregistrement de session ou contenu de candidature. Sans accord, PostHog n’est pas chargé.", analyticsPrivacy: "En savoir plus", analyticsReject: "Refuser", analyticsAccept: "Autoriser l’analyse",
+    },
+    es: {
+      login: "Iniciar sesión", register: "Registrarse", loginTitle: "Qué bueno verte de nuevo.", signupTitle: "Crear una cuenta.", loginSubtitle: "Inicia sesión y continúa donde lo dejaste.", signupSubtitle: "Unos pasos para tenerlo todo más claro.", freeRegister: "Registrarse gratis",
+      setupEyebrow: "Tu configuración", setupTitle: "Adapta Jobply a tu vida.", setupIntro: "Cinco pasos rápidos para personalizar Jobply.", stepLanguage: "Idioma", stepAbout: "Sobre ti", stepSituation: "Tu situación", stepGoal: "Tu objetivo", stepCv: "Currículum", privateNote: "Todos los datos son opcionales y solo tú puedes verlos.",
+      languageCount: "01 — Idioma", languageTitle: "¿Qué idioma quieres usar?", languageCopy: "Puedes cambiarlo en cualquier momento en los ajustes.", languagePrivacy: "Preseleccionado según el idioma del navegador, sin ubicación ni consulta de IP.",
+      aboutCount: "02 — Sobre ti", aboutTitle: "¿Quién eres?", aboutCopy: "Un poco de contexto es suficiente. Puedes cambiarlo todo después.", nameQuestion: "¿Cómo quieres que te llamemos?", namePlaceholder: "Nombre o apodo (opcional)", roleQuestion: "¿Qué puesto buscas?", rolePlaceholder: "p. ej. Product Designer (opcional)",
+      situationCount: "03 — Tu situación", situationTitle: "¿Tienes trabajo actualmente?", situationCopy: "Así adaptamos la búsqueda a tu situación.", employed: "Sí, tengo empleo", employedHint: "Busco desde mi puesto actual.", unemployed: "No, ahora mismo no", unemployedHint: "Mi búsqueda de empleo es prioritaria.", student: "Estudios o formación", studentHint: "Estoy empezando o preparando mi carrera.", other: "Otra situación", otherHint: "Prefiero no especificarlo.",
+      goalCount: "04 — Tu objetivo", goalTitle: "¿Cuántas solicitudes quieres enviar?", goalCopy: "Un objetivo mensual realista hace visible tu progreso.", applicationsMonth: "solicitudes al mes", applicationMonth: "solicitud al mes", optionalCount: "05 — Opcional", cvTitle: "¿Listo para tu próxima entrevista?", cvCopy: "Tu currículum ayuda a Jobply a crear mejores preguntas y respuestas.", selectCv: "Elegir currículum", cvLimit: "PDF o DOCX · máx. 10 MB", cvPrivacy: "Guardado de forma privada. Solo se envía a la IA con tu permiso explícito.", later: "Más tarde", logout: "Cerrar sesión", back: "Atrás", next: "Siguiente", finish: "Finalizar configuración",
+      workspace: "Tu espacio", settings: "Ajustes", languageSetting: "Idioma", languageSettingHint: "Idioma de la aplicación", dashboardTitle: "Tus solicitudes", dashboardSubtitle: "Todo en un solo lugar: desde el primer envío hasta la oferta.", addApplication: "Nueva solicitud", applications: "Solicitudes", interviews: "Entrevistas", statistics: "Estadísticas", search: "Buscar empresa, puesto o nota…", totalCard: "Tarjeta de resumen", totalCardHint: "Exporta todo tu estado de solicitudes como PNG", analyticsTitle: "Ayúdanos a mejorar Jobply", analyticsCopy: "Con tu permiso, PostHog solo nos ayuda a contar usuarios activos mensuales. Sin perfiles publicitarios, grabaciones de sesión ni contenido de solicitudes. Sin consentimiento, PostHog no se carga.", analyticsPrivacy: "Más sobre privacidad", analyticsReject: "No permitir", analyticsAccept: "Permitir análisis",
+    },
+    sv: {
+      login: "Logga in", register: "Registrera", loginTitle: "Välkommen tillbaka.", signupTitle: "Skapa ett konto.", loginSubtitle: "Logga in och fortsätt där du slutade.", signupSubtitle: "Några steg till bättre överblick.", freeRegister: "Registrera gratis",
+      setupEyebrow: "Din konfiguration", setupTitle: "Anpassa Jobply till ditt liv.", setupIntro: "Fem korta steg gör Jobply mer personligt.", stepLanguage: "Språk", stepAbout: "Om dig", stepSituation: "Din situation", stepGoal: "Ditt mål", stepCv: "CV", privateNote: "Alla uppgifter är frivilliga och syns bara för dig.",
+      languageCount: "01 — Språk", languageTitle: "Vilket språk vill du använda?", languageCopy: "Du kan ändra det när som helst i inställningarna.", languagePrivacy: "Förvalt från webbläsarens språk – utan plats- eller IP-kontroll.",
+      aboutCount: "02 — Om dig", aboutTitle: "Vem är du?", aboutCopy: "Lite sammanhang räcker. Du kan ändra allt senare.", nameQuestion: "Vad ska vi kalla dig?", namePlaceholder: "Förnamn eller smeknamn (valfritt)", roleQuestion: "Vilken roll söker du?", rolePlaceholder: "t.ex. Product Designer (valfritt)",
+      situationCount: "03 — Din situation", situationTitle: "Har du ett jobb just nu?", situationCopy: "Det hjälper oss anpassa jobbsökandet till din situation.", employed: "Ja, jag är anställd", employedHint: "Jag söker från min nuvarande tjänst.", unemployed: "Nej, inte just nu", unemployedHint: "Mitt jobbsökande är prioriterat.", student: "Studier eller utbildning", studentHint: "Jag börjar eller planerar min karriär.", other: "Något annat", otherHint: "Jag vill inte ange mer.",
+      goalCount: "04 — Ditt mål", goalTitle: "Hur många ansökningar vill du skicka?", goalCopy: "Ett realistiskt månadsmål gör framstegen synliga.", applicationsMonth: "ansökningar per månad", applicationMonth: "ansökan per månad", optionalCount: "05 — Valfritt", cvTitle: "Redo för nästa intervju?", cvCopy: "Ditt CV hjälper Jobply skapa bättre frågor och svarsförslag.", selectCv: "Välj CV", cvLimit: "PDF eller DOCX · max 10 MB", cvPrivacy: "Sparas privat. Ditt CV skickas endast till AI med ditt uttryckliga godkännande.", later: "Senare", logout: "Logga ut", back: "Tillbaka", next: "Nästa", finish: "Slutför",
+      workspace: "Din arbetsyta", settings: "Inställningar", languageSetting: "Språk", languageSettingHint: "Appens visningsspråk", dashboardTitle: "Dina ansökningar", dashboardSubtitle: "Allt på ett ställe – från första ansökan till erbjudande.", addApplication: "Ny ansökan", applications: "Ansökningar", interviews: "Intervjuer", statistics: "Statistik", search: "Sök företag, roll eller anteckning…", totalCard: "Översiktskort", totalCardHint: "Exportera hela din ansökningsstatus som en snygg PNG", analyticsTitle: "Hjälp oss göra Jobply bättre", analyticsCopy: "Med ditt godkännande använder vi PostHog endast för att räkna aktiva användare per månad. Inga annonsprofiler, sessionsinspelningar eller ansökningsinnehåll. Utan samtycke laddas inte PostHog.", analyticsPrivacy: "Mer om integritet", analyticsReject: "Tillåt inte", analyticsAccept: "Tillåt analys",
+    },
+  };
+
+  function detectPreferredLanguage() {
+    const candidates = [...(navigator.languages || []), navigator.language || ""];
+    return candidates.map((value) => String(value).toLowerCase().split("-")[0]).find((value) => SUPPORTED_LANGUAGES.includes(value)) || "de";
+  }
+
+  let currentLanguage = (() => {
+    try {
+      const saved = localStorage.getItem(LANGUAGE_KEY);
+      return SUPPORTED_LANGUAGES.includes(saved) ? saved : detectPreferredLanguage();
+    } catch { return detectPreferredLanguage(); }
+  })();
+  const tr = (key) => UI_TRANSLATIONS[currentLanguage]?.[key] || UI_TRANSLATIONS.de[key] || key;
+  const currentLocale = () => LANGUAGE_LOCALES[currentLanguage] || LANGUAGE_LOCALES.de;
 
   // Ergebnis (outcome) – how it ended / where it stands
   const STATUSES = [
@@ -149,6 +242,7 @@
   };
 
   const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+  const monthLabel = (index, width = "long") => new Intl.DateTimeFormat(currentLocale(), { month: width, timeZone: "UTC" }).format(new Date(Date.UTC(2020, index, 1)));
 
   const ICONS = {
     calendar: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>',
@@ -168,6 +262,167 @@
   const $$ = (sel, root = document) => root.querySelectorAll(sel);
   const uid = () => globalThis.crypto?.randomUUID?.()
     || Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+
+  function applyLanguage() {
+    document.documentElement.lang = currentLanguage;
+    $$('[data-i18n]').forEach((element) => { element.textContent = tr(element.dataset.i18n); });
+    $$('[data-i18n-placeholder]').forEach((element) => { element.placeholder = tr(element.dataset.i18nPlaceholder); });
+    const languageInputs = [$("#onboardingLanguage"), $("#settingsLanguage")].filter(Boolean);
+    languageInputs.forEach((input) => { input.value = currentLanguage; });
+    $$('[data-language]').forEach((button) => button.classList.toggle("selected", button.dataset.language === currentLanguage));
+    if ($("#onboardingGoalOutput")) updateOnboardingGoal(onboardingGoalValue || 10);
+    if (typeof authMode !== "undefined" && $("#authTitle")) setAuthMode(authMode);
+    if (!$("#mainApp")?.hidden) setView(state.view);
+  }
+
+  function setLanguage(language, { persist = true } = {}) {
+    currentLanguage = SUPPORTED_LANGUAGES.includes(language) ? language : "de";
+    if (persist) try { localStorage.setItem(LANGUAGE_KEY, currentLanguage); } catch {}
+    applyLanguage();
+  }
+
+  function readAnalyticsConsent() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(ANALYTICS_CONSENT_KEY) || "null");
+      if (stored?.version === ANALYTICS_CONSENT_VERSION && ["granted", "denied"].includes(stored.status)) return stored;
+    } catch {}
+    return { status: "pending", version: ANALYTICS_CONSENT_VERSION };
+  }
+
+  function writeAnalyticsConsent(status) {
+    const value = { status, version: ANALYTICS_CONSENT_VERSION, decided_at: new Date().toISOString() };
+    try { localStorage.setItem(ANALYTICS_CONSENT_KEY, JSON.stringify(value)); } catch {}
+    return value;
+  }
+
+  function renderAnalyticsConsent() {
+    const status = readAnalyticsConsent().status;
+    const banner = $("#analyticsConsent");
+    if (banner) banner.hidden = status !== "pending";
+    const input = $("#analyticsConsentInput");
+    if (input) input.checked = status === "granted";
+  }
+
+  function showAnalyticsConsentIfNeeded() {
+    renderAnalyticsConsent();
+    if (readAnalyticsConsent().status === "granted") void initAnalytics();
+  }
+
+  function installPostHogStub() {
+    if (window.posthog?.__SV) return window.posthog;
+    const posthog = window.posthog = window.posthog || [];
+    posthog._i = posthog._i || [];
+    posthog.init = function init(token, config, name) {
+      const script = document.createElement("script");
+      script.type = "text/javascript";
+      script.crossOrigin = "anonymous";
+      script.async = true;
+      script.src = "/vendor/posthog-1.445.5-array.no-external.js";
+      const firstScript = document.getElementsByTagName("script")[0];
+      firstScript.parentNode.insertBefore(script, firstScript);
+      let instance = posthog;
+      if (name !== undefined) instance = posthog[name] = [];
+      else name = "posthog";
+      instance.people = instance.people || [];
+      const methods = "init capture register register_once unregister identify reset opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing stopSessionRecording set_config".split(" ");
+      methods.forEach((method) => { instance[method] = (...args) => instance.push([method, ...args]); });
+      posthog._i.push([token, config, name]);
+    };
+    posthog.__SV = 1;
+    return posthog;
+  }
+
+  function syncAnalyticsIdentity() {
+    if (readAnalyticsConsent().status !== "granted" || !currentUser?.id || !window.posthog?.identify) return;
+    window.posthog.identify(currentUser.id);
+    if (!analyticsActiveUserCaptured) {
+      analyticsActiveUserCaptured = true;
+      window.posthog.capture("app_opened", { surface: "web" });
+    }
+  }
+
+  function initAnalytics() {
+    if (readAnalyticsConsent().status !== "granted" || analyticsLoadPromise) return analyticsLoadPromise;
+    if (!POSTHOG_PROJECT_KEY) {
+      console.warn("PostHog analytics is enabled by the user but no public project token is configured.");
+      return null;
+    }
+    analyticsLoadPromise = Promise.resolve().then(() => {
+      const posthog = installPostHogStub();
+      posthog.init(POSTHOG_PROJECT_KEY, {
+        api_host: POSTHOG_API_HOST,
+        defaults: "2026-08-30",
+        autocapture: false,
+        capture_pageview: false,
+        capture_pageleave: false,
+        capture_performance: false,
+        capture_exceptions: false,
+        capture_console_errors: false,
+        capture_unhandled_errors: false,
+        capture_unhandled_rejections: false,
+        disable_session_recording: true,
+        disable_surveys: true,
+        disable_surveys_automatic_display: true,
+        disable_web_experiments: true,
+        disable_external_dependency_loading: true,
+        advanced_disable_feature_flags: true,
+        person_profiles: "identified_only",
+        persistence: "localStorage",
+        opt_out_capturing_by_default: true,
+        opt_out_persistence_by_default: true,
+        respect_dnt: true,
+        loaded(instance) {
+          instance.stopSessionRecording();
+          instance.opt_in_capturing({ captureEventName: false });
+          syncAnalyticsIdentity();
+        },
+      });
+      return posthog;
+    });
+    return analyticsLoadPromise;
+  }
+
+  async function persistAnalyticsConsent(value) {
+    if (!currentUser?.id) return;
+    await saveConsent({
+      analytics_consent_at: value.status === "granted" ? value.decided_at : null,
+      analytics_consent_version: value.version,
+    }).catch(() => false);
+  }
+
+  function clearPostHogPersistence() {
+    try {
+      for (const key of Object.keys(localStorage)) if (key.startsWith("ph_")) localStorage.removeItem(key);
+      for (const key of Object.keys(sessionStorage)) if (key.startsWith("ph_")) sessionStorage.removeItem(key);
+      document.cookie.split(";").forEach((part) => {
+        const name = part.split("=")[0].trim();
+        if (name.startsWith("ph_")) document.cookie = `${name}=; Max-Age=0; path=/; SameSite=Lax`;
+      });
+    } catch {}
+  }
+
+  async function setAnalyticsConsent(status, { fromSettings = false } = {}) {
+    const value = writeAnalyticsConsent(status);
+    $("#analyticsConsent").hidden = true;
+    renderAnalyticsConsent();
+    if (status === "granted") {
+      await initAnalytics();
+      if (window.posthog?.opt_in_capturing) {
+        window.posthog.stopSessionRecording();
+        window.posthog.opt_in_capturing({ captureEventName: false });
+      }
+      syncAnalyticsIdentity();
+    } else {
+      analyticsActiveUserCaptured = false;
+      if (window.posthog?.reset) {
+        window.posthog.reset(true);
+        window.posthog.opt_out_capturing();
+      }
+      clearPostHogPersistence();
+    }
+    void persistAnalyticsConsent(value);
+    if (fromSettings) $("#consentMessage").textContent = status === "granted" ? "Nutzungsanalyse erlaubt." : "Nutzungsanalyse widerrufen.";
+  }
   const pendingOperationKey = (scope) => {
     const storageKey = `jobply.pending.${scope}`;
     let key = "";
@@ -209,7 +464,7 @@
   function privateCompany(name) {
     if (!state?.privacy) return String(name || "");
     const companies = [...new Set(state.apps.map((a) => String(a.firma || "").trim()).filter(Boolean))]
-      .sort((a, b) => a.localeCompare(b, "de", { sensitivity: "base" }));
+      .sort((a, b) => a.localeCompare(b, currentLocale(), { sensitivity: "base" }));
     const index = Math.max(0, companies.findIndex((company) => company === String(name || "").trim()));
     return `Unternehmen ${alphaCode(index)}`;
   }
@@ -243,7 +498,7 @@
   function fmtDateLong(iso) {
     if (!iso) return "";
     const d = new Date(iso + "T00:00:00");
-    return d.toLocaleDateString("de-CH", { day: "numeric", month: "short", year: "numeric" });
+    return d.toLocaleDateString(currentLocale(), { day: "numeric", month: "short", year: "numeric" });
   }
   function daysSince(iso) {
     if (!iso) return null;
@@ -584,7 +839,7 @@
     for (const a of sortApps(apps, "date-desc")) {
       const proofIn = a.links.filter((l) => l.type === "bestaetigung").map((l) => l.url).join(" ");
       const proofOut = a.links.filter((l) => l.type !== "bestaetigung").map((l) => l.url).join(" ");
-      const month = a.datum ? MONTHS[+a.datum.slice(5, 7) - 1] : "";
+      const month = a.datum ? monthLabel(+a.datum.slice(5, 7) - 1) : "";
       lines.push([
         month, fmtDate(a.datum), a.firma, a.stelle, STATUS[a.status]?.label || "", PHASE[a.phase]?.label || "",
         fmtDate(a.absageAm), a.contactName, a.contactEmail, a.nextAction, fmtDate(a.followUpAt), a.followUpDoneAt ? "Ja" : "Nein",
@@ -622,7 +877,7 @@
     const arr = [...apps];
     const byDate = (a, b) => (b.datum || "").localeCompare(a.datum || "") || a.firma.localeCompare(b.firma);
     if (mode === "date-asc") arr.sort((a, b) => -byDate(a, b));
-    else if (mode === "company") arr.sort((a, b) => a.firma.localeCompare(b.firma, "de", { sensitivity: "base" }));
+    else if (mode === "company") arr.sort((a, b) => a.firma.localeCompare(b.firma, currentLocale(), { sensitivity: "base" }));
     else if (mode === "updated") arr.sort((a, b) => (b.updated || 0) - (a.updated || 0));
     else arr.sort(byDate);
     return arr;
@@ -730,7 +985,7 @@
       action: "stats", label: "Statistiken ansehen",
     });
     if (topMonth) facts.push({
-      text: `Dein aktivster Monat war ${MONTHS[Number(topMonth[0].slice(5, 7)) - 1]} ${topMonth[0].slice(0, 4)} mit ${topMonth[1]} Bewerbungen.`,
+      text: `Dein aktivster Monat war ${monthLabel(Number(topMonth[0].slice(5, 7)) - 1)} ${topMonth[0].slice(0, 4)} mit ${topMonth[1]} Bewerbungen.`,
       action: "stats", label: "Verlauf ansehen",
     });
     if (total && finishedCount) facts.push({
@@ -1100,7 +1355,7 @@
     let gi = 0;
     for (const [key, list] of groups) {
       const open = searching || state.openMonths.has(key);
-      const name = key === "none" ? "Ohne Datum" : MONTHS[+key.slice(5, 7) - 1];
+      const name = key === "none" ? "Ohne Datum" : monthLabel(+key.slice(5, 7) - 1);
       const year = key === "none" ? "" : key.slice(0, 4);
       const by = STATUSES.map((s) => ({ ...s, n: list.filter((a) => a.status === s.id).length })).filter((s) => s.n);
       html += `
@@ -1159,7 +1414,7 @@
     if (!apps.length) return toast("Keine Bewerbungen in diesem Monat");
     const label = key === "none" ? "ohne-datum" : key;
     download(`bewerbungen-${label}.csv`, appsToCSV(apps), "text/csv;charset=utf-8");
-    const name = key === "none" ? "Ohne Datum" : `${MONTHS[+key.slice(5, 7) - 1]} ${key.slice(0, 4)}`;
+    const name = key === "none" ? "Ohne Datum" : `${monthLabel(+key.slice(5, 7) - 1)} ${key.slice(0, 4)}`;
     toast(`${name} als CSV exportiert`);
   }
 
@@ -1171,11 +1426,17 @@
   }
 
   function shareCardForMonth(key) {
-    const apps = state.apps.filter((a) => key === "none" ? !a.datum : a.datum?.slice(0, 7) === key);
-    if (!apps.length) return toast("Keine Bewerbungen in diesem Monat");
+    const isCompleteOverview = key === "all";
+    const apps = isCompleteOverview
+      ? [...state.apps]
+      : state.apps.filter((a) => key === "none" ? !a.datum : a.datum?.slice(0, 7) === key);
+    if (!apps.length) return toast(isCompleteOverview ? "Noch keine Bewerbungen für die Gesamtübersicht" : "Keine Bewerbungen in diesem Monat");
 
-    const name = key === "none" ? "Ohne Datum" : MONTHS[+key.slice(5, 7) - 1];
-    const year = key === "none" ? "" : key.slice(0, 4);
+    const name = isCompleteOverview ? "Gesamtüberblick" : (key === "none" ? "Ohne Datum" : monthLabel(+key.slice(5, 7) - 1));
+    const datedYears = apps.map((app) => app.datum?.slice(0, 4)).filter(Boolean).sort();
+    const year = isCompleteOverview
+      ? (datedYears.length ? (datedYears[0] === datedYears.at(-1) ? datedYears[0] : `${datedYears[0]}–${datedYears.at(-1)}`) : "Alle Zeiträume")
+      : (key === "none" ? "" : key.slice(0, 4));
     const total = apps.length;
     const counts = Object.fromEntries(STATUSES.map((s) => [s.id, apps.filter((a) => a.status === s.id).length]));
     const talks = apps.filter(hadInterview).length;
@@ -1187,7 +1448,7 @@
       const role = ROLE_ALIASES[cleaned.toLowerCase()] || cleaned;
       roleCounts.set(role, (roleCounts.get(role) || 0) + 1);
     });
-    const roles = [...roleCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "de")).slice(0, 3);
+    const roles = [...roleCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], currentLanguage)).slice(0, 3);
 
     const canvas = document.createElement("canvas");
     canvas.width = 1200; canvas.height = 1500;
@@ -1208,7 +1469,7 @@
     orb(120, 920, 520, "rgba(96,165,250,.30)");
     orb(1080, 1320, 430, "rgba(251,146,60,.22)");
     // subtle tactile grain
-    let seed = total * 97 + (key === "none" ? 7 : Number(key.replace("-", "")));
+    let seed = total * 97 + (isCompleteOverview ? 2026 : (key === "none" ? 7 : Number(key.replace("-", ""))));
     for (let i = 0; i < 1000; i++) {
       seed = (seed * 1664525 + 1013904223) >>> 0;
       const x = seed % 1200; seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -1237,10 +1498,10 @@
     ctx.fillStyle = "#111827"; ctx.font = "750 29px Inter, system-ui, sans-serif"; ctx.fillText("BEWERBUNGEN", 172, 96);
     ctx.fillStyle = "#64748b"; ctx.font = "520 20px Inter, system-ui, sans-serif"; ctx.fillText("MONTHLY REPORT", 173, 130);
     roundRect(ctx, 910, 70, 220, 54, 27, "rgba(255,255,255,.55)");
-    ctx.fillStyle = "#6d28d9"; ctx.font = "700 18px Inter, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText(`${name.toUpperCase()} · ${year}`, 1020, 104); ctx.textAlign = "left";
+    ctx.fillStyle = "#6d28d9"; ctx.font = "700 18px Inter, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText(isCompleteOverview ? `GESAMTSTAND · ${year}` : `${name.toUpperCase()} · ${year}`, 1020, 104); ctx.textAlign = "left";
 
-    ctx.fillStyle = "#111827"; ctx.font = "760 82px Inter, system-ui, sans-serif"; ctx.fillText("Mein Monat.", 66, 260);
-    ctx.fillStyle = "#475569"; ctx.font = "520 29px Inter, system-ui, sans-serif"; ctx.fillText("Fortschritt in Zahlen – klar, ehrlich, sichtbar.", 70, 310);
+    ctx.fillStyle = "#111827"; ctx.font = "760 82px Inter, system-ui, sans-serif"; ctx.fillText(isCompleteOverview ? "Mein Bewerbungsweg." : "Mein Monat.", 66, 260);
+    ctx.fillStyle = "#475569"; ctx.font = "520 29px Inter, system-ui, sans-serif"; ctx.fillText(isCompleteOverview ? "Der komplette Stand – fokussiert, farbig, auf einen Blick." : "Fortschritt in Zahlen – klar, ehrlich, sichtbar.", 70, 310);
 
     // Hero glass
     glass(66, 360, 1068, 300, 44, .50);
@@ -1304,15 +1565,22 @@
 
     roundRect(ctx, 66, 1360, 1068, 2, 1, "rgba(100,116,139,.22)");
     ctx.fillStyle = "#64748b"; ctx.font = "540 19px Inter, system-ui, sans-serif"; ctx.fillText("Nicht perfekt. Aber konsequent.", 68, 1420);
-    ctx.fillStyle = "#111827"; ctx.font = "720 19px Inter, system-ui, sans-serif"; ctx.textAlign = "right"; ctx.fillText("BEWERBUNGEN · 2026", 1132, 1420); ctx.textAlign = "left";
+    ctx.fillStyle = "#111827"; ctx.font = "720 19px Inter, system-ui, sans-serif"; ctx.textAlign = "right"; ctx.fillText(isCompleteOverview ? "JOBPLY · GESAMTÜBERBLICK" : "BEWERBUNGEN · 2026", 1132, 1420); ctx.textAlign = "left";
 
     const data = canvas.toDataURL("image/png");
     const binary = atob(data.split(",")[1]);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const filename = `bewerbungsmonat-${key === "none" ? "ohne-datum" : key}.png`;
+    const filename = isCompleteOverview ? "jobply-bewerbungsstand.png" : `bewerbungsmonat-${key === "none" ? "ohne-datum" : key}.png`;
     const file = new File([bytes], filename, { type: "image/png" });
-    openSharePreview({ file, data, title: `Mein Bewerbungsmonat ${name} ${year}`.trim() });
+    openSharePreview({
+      file,
+      data,
+      title: isCompleteOverview ? "Mein kompletter Bewerbungsstand" : `Mein Bewerbungsmonat ${name} ${year}`.trim(),
+      previewTitle: isCompleteOverview ? "Deine Gesamtübersicht" : "Deine Monatskarte",
+      previewSubtitle: isCompleteOverview ? `${total} Bewerbungen · bereit zum Speichern oder Teilen` : "Bereit zum Posten · ohne Firmennamen",
+      kind: isCompleteOverview ? "Gesamtübersicht" : "Monatskarte",
+    });
   }
 
   const sharePreview = $("#sharePreview"), sharePreviewOverlay = $("#sharePreviewOverlay");
@@ -1321,6 +1589,8 @@
 
   function openSharePreview(card) {
     pendingShareCard = card;
+    $("#sharePreviewTitle").textContent = card.previewTitle || "Deine Karte";
+    $("#sharePreviewTitle").nextElementSibling.textContent = card.previewSubtitle || "Bereit zum Speichern";
     sharePreviewImage.src = card.data;
     const canShare = !!(navigator.share && navigator.canShare?.({ files: [card.file] }));
     nativeShareCard.hidden = !canShare;
@@ -1345,13 +1615,13 @@
   $("#downloadShareCard").addEventListener("click", () => {
     if (!pendingShareCard) return;
     download(pendingShareCard.file.name, pendingShareCard.file, "image/png");
-    toast("Monatskarte als PNG gespeichert");
+    toast(`${pendingShareCard.kind || "Karte"} als PNG gespeichert`);
   });
   nativeShareCard.addEventListener("click", async () => {
     if (!pendingShareCard) return;
     try {
       await navigator.share({ files: [pendingShareCard.file], title: pendingShareCard.title });
-      toast("Monatskarte geteilt");
+      toast(`${pendingShareCard.kind || "Karte"} geteilt`);
     } catch (error) { if (error.name !== "AbortError") toast("Teilen nicht möglich – bitte PNG speichern"); }
   });
 
@@ -1493,7 +1763,7 @@
     const out = [];
     const thisWeek = s.weeks[s.weeks.length - 1].n;
     if (s.first) {
-      const pace = s.perWeek.toLocaleString("de-CH", { maximumFractionDigits: 1 });
+      const pace = s.perWeek.toLocaleString(currentLocale(), { maximumFractionDigits: 1 });
       out.push({ c: "var(--accent)", t: `Du bewirbst dich im Schnitt <b>${pace}× pro Woche</b>${thisWeek ? ` – diese Woche schon <b>${thisWeek}</b>` : " – diese Woche noch keine"}.` });
     }
     if (s.rMedian !== null) {
@@ -1513,7 +1783,7 @@
     }
     if (s.topMonth) {
       const [key, n] = s.topMonth;
-      out.push({ c: "var(--text-3)", t: `Aktivster Monat: <b>${MONTHS[+key.slice(5, 7) - 1]} ${key.slice(0, 4)}</b> mit ${n} Bewerbungen.` });
+      out.push({ c: "var(--text-3)", t: `Aktivster Monat: <b>${monthLabel(+key.slice(5, 7) - 1)} ${key.slice(0, 4)}</b> mit ${n} Bewerbungen.` });
     }
     return out;
   }
@@ -1556,7 +1826,7 @@
         </div>`;
       return;
     }
-    const pace = s.perWeek.toLocaleString("de-CH", { maximumFractionDigits: 1 });
+    const pace = s.perWeek.toLocaleString(currentLocale(), { maximumFractionDigits: 1 });
     const thisWeek = s.weeks[s.weeks.length - 1].n;
     const kpis = [
       { label: "Antwortquote", value: `${pctOf(s.answered, s.total)} %`, sub: `${s.answered} von ${s.total} haben reagiert`, c: STATUS.offen.color },
@@ -1619,8 +1889,8 @@
       </table>`;
 
     const month = s.monthCurrent, previousMonth = s.monthPrevious;
-    const monthName = `${MONTHS[+month.key.slice(5, 7) - 1]} ${month.key.slice(0, 4)}`;
-    const previousMonthName = MONTHS[+previousMonth.key.slice(5, 7) - 1];
+    const monthName = `${monthLabel(+month.key.slice(5, 7) - 1)} ${month.key.slice(0, 4)}`;
+    const previousMonthName = monthLabel(+previousMonth.key.slice(5, 7) - 1);
     const monthDelta = month.total - previousMonth.total;
     const deltaText = monthDelta === 0
       ? `gleich viele wie im ${previousMonthName}`
@@ -1750,7 +2020,7 @@
       const past = date.getTime() < now;
       const expanded = interview._expanded && interview.ai_prep;
       return `<article class="interview-card ${past ? "past" : ""}" data-interview-id="${esc(interview.id)}">
-        <div class="interview-date"><b>${String(date.getDate()).padStart(2, "0")}</b><span>${MONTHS[date.getMonth()].slice(0,3)} · ${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}</span></div>
+        <div class="interview-date"><b>${String(date.getDate()).padStart(2, "0")}</b><span>${monthLabel(date.getMonth(), "short")} · ${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}</span></div>
         <div class="interview-main"><h3>${esc(privateCompany(application?.firma || "Unbekannte Firma"))}</h3><p>${esc(application?.stelle || "Bewerbung")}</p>
           <div class="interview-meta"><span>${esc(INTERVIEW_STAGES[interview.stage] || INTERVIEW_STAGES.other)}</span><span>${esc(INTERVIEW_FORMATS[interview.format] || INTERVIEW_FORMATS.other)}</span>${interview.interviewer ? `<span>${esc(interview.interviewer)}</span>` : ""}</div>
         </div>
@@ -1859,16 +2129,13 @@
     $("#viewList").hidden = state.view !== "list";
     $("#viewInterviews").hidden = state.view !== "interviews";
     $("#viewInsights").hidden = state.view !== "insights";
-    const copy = {
-      list: ["Dashboard", "Deine Bewerbungen", "Alles an einem Ort – vom ersten Versand bis zum Angebot."],
-      interviews: ["Interview Workspace", "Deine Gespräche", "Termine, Vorbereitung und Gesprächsnotizen an einem Ort."],
-      insights: ["Analytics", "Deine Statistiken", "Trends, Erfolgsquoten und Fortschritt deiner Jobsuche."],
-    }[state.view];
+    const localizedViews = VIEW_TRANSLATIONS[currentLanguage] || VIEW_TRANSLATIONS.de;
+    const copy = localizedViews[state.view];
     $("#dashboardKicker").textContent = copy[0];
     $("#dashboardTitle").textContent = copy[1];
     $("#subtitle").textContent = copy[2];
     const addLabel = $("#addBtn span");
-    addLabel.textContent = state.view === "interviews" ? "Gespräch hinzufügen" : "Neue Bewerbung";
+    addLabel.textContent = state.view === "interviews" ? localizedViews.addInterview : tr("addApplication");
     $("#addBtn").querySelector("svg").style.display = state.view === "insights" ? "none" : "";
     $("#addBtn").hidden = state.view === "insights";
     $$('[data-workspace-view]').forEach((button) => {
@@ -3150,7 +3417,7 @@
     premiumCard.classList.toggle("is-ending", billingState.premium && billingState.cancelAtPeriodEnd);
     if (billingState.premium) {
       $("#billingTitle").textContent = "Dein Premium-Abo";
-      const end = billingState.periodEnd ? new Date(billingState.periodEnd).toLocaleDateString("de-CH") : "";
+      const end = billingState.periodEnd ? new Date(billingState.periodEnd).toLocaleDateString(currentLocale()) : "";
       tag.textContent = billingState.cancelAtPeriodEnd ? "PREMIUM · GEKÜNDIGT" : "PREMIUM AKTIV";
       summary.textContent = billingState.cancelAtPeriodEnd
         ? (end ? `Aktiv bis ${end} · keine Verlängerung` : "Kündigung zum Periodenende vorgemerkt")
@@ -3247,7 +3514,7 @@
       if (run !== billingActivationRun) return;
       await refreshBillingStatus();
       if (billingState.premium) {
-        const end = billingState.periodEnd ? new Date(billingState.periodEnd).toLocaleDateString("de-CH") : "";
+        const end = billingState.periodEnd ? new Date(billingState.periodEnd).toLocaleDateString(currentLocale()) : "";
         $("#billingSuccessMessage").textContent = end
           ? `Premium ist aktiv. Deine aktuelle Abrechnungsperiode läuft bis ${end}.`
           : "Premium ist jetzt aktiv. Viel Erfolg mit deinen KI-Funktionen!";
@@ -3347,7 +3614,7 @@
     try {
       const expectedUserId = currentUser.id;
       const { data, error } = await db.from("user_profiles")
-        .select("display_name,target_role,employment_status,monthly_application_goal,ai_completed_tasks,cv_path,cv_name,cv_uploaded_at,privacy_policy_version,privacy_accepted_at,ai_processing_consent_at,ai_cv_consent_at")
+        .select("display_name,target_role,employment_status,monthly_application_goal,preferred_language,ai_completed_tasks,cv_path,cv_name,cv_uploaded_at,privacy_policy_version,privacy_accepted_at,ai_processing_consent_at,ai_cv_consent_at,analytics_consent_at,analytics_consent_version")
         .eq("user_id", expectedUserId).maybeSingle();
       if (error) throw error;
       if (!settingsOpen || currentUser?.id !== expectedUserId) return;
@@ -3355,6 +3622,7 @@
       $("#settingsRole").value = data?.target_role || "";
       $("#settingsEmployment").value = data?.employment_status || "";
       $("#settingsGoal").value = data?.monthly_application_goal || 10;
+      $("#settingsLanguage").value = currentLanguage;
       $("#settingsCvStatus").textContent = data?.cv_name ? `${data.cv_name} · privat gespeichert` : "Noch kein Lebenslauf hinterlegt";
       renderConsentSettings(data);
       $("#settingsAccountMessage").textContent = "";
@@ -3393,6 +3661,7 @@
         target_role: $("#settingsRole").value.trim().slice(0, 120) || null,
         employment_status: $("#settingsEmployment").value || null,
         monthly_application_goal: goal,
+        preferred_language: SUPPORTED_LANGUAGES.includes($("#settingsLanguage").value) ? $("#settingsLanguage").value : currentLanguage,
         onboarding_completed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -3407,6 +3676,7 @@
       }
       if (currentUser?.id !== expectedUserId) return;
       userProfile = { ...(userProfile || {}), ...profile };
+      setLanguage(profile.preferred_language);
       updateNavIdentity(profile);
       renderAiBrief();
       message.textContent = `Gespeichert.${emailNotice}`;
@@ -3472,6 +3742,7 @@
     $("#aiConsentInput").checked = Boolean(profile?.ai_processing_consent_at);
     $("#aiCvConsentInput").checked = Boolean(profile?.ai_cv_consent_at);
     $("#aiCvConsentInput").disabled = !profile?.ai_processing_consent_at;
+    $("#analyticsConsentInput").checked = readAnalyticsConsent().status === "granted";
     $("#consentMessage").textContent = "";
   }
 
@@ -3635,6 +3906,7 @@
   $("#accountSettingsForm").addEventListener("submit", saveAccountSettings);
   $("#settingsBackupBtn").addEventListener("click", () => handleAction("export-json"));
   $("#settingsCsvBtn").addEventListener("click", () => handleAction("export-csv"));
+  $("#settingsStatusCardBtn").addEventListener("click", () => { closeSettings(); shareCardForMonth("all"); });
   $("#settingsImportBtn").addEventListener("click", () => { closeSettings(); openImportDialog(); });
   $("#openPremiumStatsBtn").addEventListener("click", () => { closeSettings(); setView("insights"); });
   $("#settingsSignoutBtn").addEventListener("click", () => { closeSettings(); db.auth.signOut(); });
@@ -3644,6 +3916,9 @@
   $("#deleteAllDataBtn").addEventListener("click", deleteAllUserData);
   $("#aiConsentInput").addEventListener("change", (event) => void updateConsent("ai_processing_consent_at", event.target.checked));
   $("#aiCvConsentInput").addEventListener("change", (event) => void updateConsent("ai_cv_consent_at", event.target.checked));
+  $("#analyticsConsentInput").addEventListener("change", (event) => void setAnalyticsConsent(event.target.checked ? "granted" : "denied", { fromSettings: true }));
+  $("#analyticsAcceptBtn").addEventListener("click", () => void setAnalyticsConsent("granted"));
+  $("#analyticsRejectBtn").addEventListener("click", () => void setAnalyticsConsent("denied"));
   $("#revealDeleteAccountBtn").addEventListener("click", () => {
     deleteAccountConfirm.hidden = !deleteAccountConfirm.hidden;
     if (!deleteAccountConfirm.hidden) deleteAccountInput.focus();
@@ -4151,11 +4426,13 @@
     loginTab.setAttribute("aria-selected", String(!signup));
     signupTab.setAttribute("aria-selected", String(signup));
     authShell.classList.toggle("signup-mode", signup);
-    $("#authTitle").textContent = signup ? "Konto erstellen." : "Willkommen zurück.";
+    loginTab.textContent = tr("login");
+    signupTab.textContent = tr("register");
+    $("#authTitle").textContent = signup ? tr("signupTitle") : tr("loginTitle");
     $("#authSubtitle").textContent = signup
-      ? "In wenigen Schritten zu mehr Überblick."
-      : "Melde dich an und mach direkt weiter.";
-    authSubmit.querySelector("span").textContent = signup ? "Kostenlos registrieren" : "Anmelden";
+      ? tr("signupSubtitle")
+      : tr("loginSubtitle");
+    authSubmit.querySelector("span").textContent = signup ? tr("freeRegister") : tr("login");
     $("#authTerms").textContent = signup
       ? "Mit der Registrierung bestätigst du die Datenschutzerklärung."
       : "Für die Nutzung gilt unsere Datenschutzerklärung.";
@@ -4195,7 +4472,7 @@
 
   async function loadUserProfile(expectedEpoch, expectedUserId, signal) {
     const { data, error } = await db.from("user_profiles")
-      .select("display_name,target_role,employment_status,monthly_application_goal,onboarding_completed_at,ai_completed_tasks,cv_path,cv_name,cv_uploaded_at,privacy_policy_version,privacy_accepted_at,ai_processing_consent_at,ai_cv_consent_at")
+      .select("display_name,target_role,employment_status,monthly_application_goal,preferred_language,onboarding_completed_at,ai_completed_tasks,cv_path,cv_name,cv_uploaded_at,privacy_policy_version,privacy_accepted_at,ai_processing_consent_at,ai_cv_consent_at,analytics_consent_at,analytics_consent_version")
       .eq("user_id", expectedUserId)
       .maybeSingle()
       .abortSignal(signal);
@@ -4220,9 +4497,9 @@
 
   function setOnboardingStep(step) {
     const previousStep = onboardingStep;
-    onboardingStep = Math.max(0, Math.min(3, step));
+    onboardingStep = Math.max(0, Math.min(4, step));
     onboardingShell.dataset.direction = onboardingStep < previousStep ? "back" : "forward";
-    onboardingShell.style.setProperty("--onboarding-progress", `${((onboardingStep + 1) / 4) * 100}%`);
+    onboardingShell.style.setProperty("--onboarding-progress", `${((onboardingStep + 1) / 5) * 100}%`);
     $$('[data-onboarding-step]').forEach((panel) => {
       const active = Number(panel.dataset.onboardingStep) === onboardingStep;
       panel.hidden = !active;
@@ -4237,7 +4514,7 @@
       else indicator.removeAttribute("aria-current");
     });
     onboardingBack.hidden = onboardingStep === 0;
-    onboardingNext.querySelector("span").textContent = onboardingStep === 3 ? "Setup abschließen" : "Weiter";
+    onboardingNext.querySelector("span").textContent = onboardingStep === 4 ? tr("finish") : tr("next");
     $("#onboardingMessage").textContent = "";
   }
 
@@ -4247,10 +4524,10 @@
     onboardingGoalValue = safeValue;
     onboardingGoal.value = String(safeValue);
     onboardingGoal.style.setProperty("--goal-progress", `${((safeValue - 1) / 49) * 100}%`);
-    onboardingGoal.setAttribute("aria-valuetext", `${safeValue} Bewerbungen pro Monat`);
+    onboardingGoal.setAttribute("aria-valuetext", `${safeValue} ${safeValue === 1 ? tr("applicationMonth") : tr("applicationsMonth")}`);
     const output = $("#onboardingGoalOutput");
     output.querySelector("strong").textContent = String(safeValue);
-    output.querySelector("span").textContent = safeValue === 1 ? "Bewerbung pro Monat" : "Bewerbungen pro Monat";
+    output.querySelector("span").textContent = safeValue === 1 ? tr("applicationMonth") : tr("applicationsMonth");
     if (safeValue !== previousValue) {
       output.classList.remove("value-pop");
       requestAnimationFrame(() => output.classList.add("value-pop"));
@@ -4299,7 +4576,9 @@
     const initializers = [
       () => setOnboardingStep(0),
       () => onboardingForm.reset(),
-      () => { $("#onboardingCvLabel").textContent = "Lebenslauf auswählen"; },
+      () => { $("#onboardingCvLabel").textContent = tr("selectCv"); },
+      () => { $("#onboardingLanguage").value = currentLanguage; },
+      () => $$('[data-language]').forEach((button) => button.classList.toggle("selected", button.dataset.language === currentLanguage)),
       () => { employmentStatus = null; },
       () => $$('[data-employment]').forEach((button) => button.classList.remove("selected")),
       () => updateOnboardingGoal(10),
@@ -4381,6 +4660,7 @@
       target_role: skipped ? null : ($("#onboardingRole").value.trim().slice(0, 120) || null),
       employment_status: skipped ? null : employmentStatus,
       monthly_application_goal: skipped ? null : Number(onboardingGoal.value),
+      preferred_language: currentLanguage,
       onboarding_completed_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       ...(consentRequired
@@ -4441,6 +4721,7 @@
     appStarted = true;
     appBoot.hidden = false;
     currentUser = session.user;
+    syncAnalyticsIdentity();
     // Credentials must never survive in hidden login controls after a
     // successful authentication or an account switch.
     authForm.reset();
@@ -4479,6 +4760,7 @@
     if (!isActiveAuthContext(expectedEpoch, expectedUserId)) return;
     try {
       userProfile = await loadUserProfile(expectedEpoch, expectedUserId, signal);
+      if (userProfile?.preferred_language) setLanguage(userProfile.preferred_language);
     } catch {
       userProfile = null;
     }
@@ -4568,6 +4850,11 @@
     closeImportDialog();
     closeSharePreview();
     closeInboundDialog();
+    if (window.posthog?.reset && readAnalyticsConsent().status === "granted") {
+      window.posthog.reset(true);
+      window.posthog.opt_in_capturing({ captureEventName: false });
+    }
+    analyticsActiveUserCaptured = false;
     currentUser = null;
     scrubSensitiveClientState();
     document.body.classList.remove("onboarding-open");
@@ -4654,7 +4941,7 @@
     if (event.key === "Escape" && authConfirmDialog.classList.contains("show")) closeAuthConfirmation();
   });
   onboardingNext.addEventListener("click", () => {
-    if (onboardingStep < 3) setOnboardingStep(onboardingStep + 1);
+    if (onboardingStep < 4) setOnboardingStep(onboardingStep + 1);
     else void completeOnboarding(false);
   });
   onboardingBack.addEventListener("click", () => setOnboardingStep(onboardingStep - 1));
@@ -4699,9 +4986,9 @@
   });
   onboardingForm.addEventListener("focusout", () => setTimeout(updateOnboardingKeyboardState, 80));
   onboardingForm.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.isComposing && onboardingStep === 0 && event.target.matches("input")) {
+    if (event.key === "Enter" && !event.isComposing && onboardingStep === 1 && event.target.matches("input")) {
       event.preventDefault();
-      setOnboardingStep(1);
+      setOnboardingStep(2);
     }
   });
   window.visualViewport?.addEventListener("resize", () => {
@@ -4711,15 +4998,22 @@
   });
   $("#onboardingCv").addEventListener("change", (event) => {
     const file = event.target.files?.[0];
-    $("#onboardingCvLabel").textContent = file?.name || "Lebenslauf auswählen";
+    $("#onboardingCvLabel").textContent = file?.name || tr("selectCv");
   });
   $$('.onboarding-presets [data-goal]').forEach((button) => button.addEventListener("click", () => updateOnboardingGoal(button.dataset.goal)));
+  $$('[data-language]').forEach((button) => button.addEventListener("click", () => {
+    $("#onboardingLanguage").value = button.dataset.language;
+    setLanguage(button.dataset.language);
+  }));
+  $("#settingsLanguage").addEventListener("change", (event) => setLanguage(event.target.value));
+  applyLanguage();
   setAuthMode("login");
 
   async function boot() {
     if (!db) {
       appBoot.hidden = true;
       authShell.hidden = false;
+      showAnalyticsConsentIfNeeded();
       return authStatus("Supabase konnte nicht geladen werden. Bitte Seite neu laden.");
     }
     try {
@@ -4749,6 +5043,7 @@
       authShell.hidden = false;
       authStatus("Die Sitzung konnte nicht geprüft werden. Bitte versuche es erneut.");
     }
+    showAnalyticsConsentIfNeeded();
     db.auth.onAuthStateChange((event, session) => {
       setTimeout(() => {
         if (session) void startApp(session);

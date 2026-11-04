@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="manifest" href="icons/site.webmanifest">
   <link rel="preload" href="fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=20261104-10">
+  <link rel="stylesheet" href="styles.css?v=20261104-12">
 </head>
 <body>
   <div class="bg-glow" aria-hidden="true"></div>
@@ -158,65 +158,81 @@
           <img class="brand-wordmark" src="brand/jobply-wordmark-black.png" alt="jobply">
         </div>
         <div class="onboarding-header-actions">
-          <button class="onboarding-skip" id="onboardingSkip" type="button" aria-label="Onboarding vorerst überspringen">Später</button>
+          <button class="onboarding-skip" id="onboardingSkip" type="button" aria-label="Onboarding vorerst überspringen" data-i18n="later">Später</button>
           <span aria-hidden="true"></span>
           <button class="onboarding-signout" id="onboardingSignout" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4M14 8l4 4-4 4m4-4H9"/></svg>
-            <span>Abmelden</span>
+            <span data-i18n="logout">Abmelden</span>
           </button>
         </div>
       </header>
 
       <div class="onboarding-layout">
         <aside class="onboarding-aside">
-          <span class="onboarding-eyebrow">Dein Setup</span>
-          <h1>Damit Jobply zu deinem Leben passt.</h1>
-          <p>Vier kurze Schritte helfen uns, Jobply persönlicher für dich zu machen.</p>
+          <span class="onboarding-eyebrow" data-i18n="setupEyebrow">Dein Setup</span>
+          <h1 data-i18n="setupTitle">Damit Jobply zu deinem Leben passt.</h1>
+          <p data-i18n="setupIntro">Fünf kurze Schritte helfen uns, Jobply persönlicher für dich zu machen.</p>
           <div class="onboarding-progress-track" aria-hidden="true"><span id="onboardingProgressBar"></span></div>
           <ol class="onboarding-steps" aria-label="Fortschritt">
-            <li class="active" data-onboarding-indicator="0"><i>1</i><span>Über dich</span></li>
-            <li data-onboarding-indicator="1"><i>2</i><span>Deine Situation</span></li>
-            <li data-onboarding-indicator="2"><i>3</i><span>Dein Ziel</span></li>
-            <li data-onboarding-indicator="3"><i>4</i><span>Lebenslauf</span></li>
+            <li class="active" data-onboarding-indicator="0"><i>1</i><span data-i18n="stepLanguage">Sprache</span></li>
+            <li data-onboarding-indicator="1"><i>2</i><span data-i18n="stepAbout">Über dich</span></li>
+            <li data-onboarding-indicator="2"><i>3</i><span data-i18n="stepSituation">Deine Situation</span></li>
+            <li data-onboarding-indicator="3"><i>4</i><span data-i18n="stepGoal">Dein Ziel</span></li>
+            <li data-onboarding-indicator="4"><i>5</i><span data-i18n="stepCv">Lebenslauf</span></li>
           </ol>
           <div class="onboarding-private">
             <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.7-2.8 8-7 10-4.2-2-7-5.3-7-10V6l7-3Z"/><path d="m9 12 2 2 4-4"/></svg>
-            <span>Alle Angaben sind freiwillig und nur für dich sichtbar.</span>
+            <span data-i18n="privateNote">Alle Angaben sind freiwillig und nur für dich sichtbar.</span>
           </div>
         </aside>
 
         <section class="onboarding-card" aria-live="polite">
           <form id="onboardingForm">
             <div class="onboarding-panel active" data-onboarding-step="0">
-              <span class="onboarding-count">01 — Über dich</span>
-              <h2>Wer bist du?</h2>
-              <p>Ein bisschen Kontext reicht. Du kannst alles später noch ändern.</p>
-              <label class="onboarding-field">
-                <span>Wie dürfen wir dich nennen?</span>
-                <input id="onboardingName" type="text" maxlength="80" autocomplete="name" placeholder="Vorname oder Spitzname (optional)">
-              </label>
-              <label class="onboarding-field">
-                <span>Welche Rolle suchst du?</span>
-                <input id="onboardingRole" type="text" maxlength="120" autocomplete="organization-title" placeholder="z. B. Product Designer (optional)">
-              </label>
+              <span class="onboarding-count" data-i18n="languageCount">01 — Sprache</span>
+              <h2 data-i18n="languageTitle">Welche Sprache möchtest du verwenden?</h2>
+              <p data-i18n="languageCopy">Du kannst sie später jederzeit in den Einstellungen ändern.</p>
+              <div class="onboarding-options language-options" id="onboardingLanguageOptions">
+                <button type="button" data-language="de"><i></i><span><strong>Deutsch</strong><small>Deutsch</small></span></button>
+                <button type="button" data-language="en"><i></i><span><strong>English</strong><small>English</small></span></button>
+                <button type="button" data-language="fr"><i></i><span><strong>Français</strong><small>Français</small></span></button>
+                <button type="button" data-language="es"><i></i><span><strong>Español</strong><small>Español</small></span></button>
+                <button type="button" data-language="sv"><i></i><span><strong>Svenska</strong><small>Svenska</small></span></button>
+              </div>
+              <input id="onboardingLanguage" type="hidden" value="de">
+              <p class="language-detection-note" data-i18n="languagePrivacy">Vorausgewählt anhand deiner Browsersprache – ohne Standort- oder IP-Abfrage.</p>
             </div>
 
             <div class="onboarding-panel" data-onboarding-step="1" hidden>
-              <span class="onboarding-count">02 — Deine Situation</span>
-              <h2>Hast du aktuell einen Job?</h2>
-              <p>So können wir deine Jobsuche passend zu deiner Situation einordnen.</p>
-              <div class="onboarding-options" id="employmentOptions">
-                <button type="button" data-employment="employed"><i></i><span><strong>Ja, ich bin angestellt</strong><small>Ich suche aus einer bestehenden Stelle heraus.</small></span></button>
-                <button type="button" data-employment="unemployed"><i></i><span><strong>Nein, aktuell nicht</strong><small>Meine Jobsuche hat gerade Priorität.</small></span></button>
-                <button type="button" data-employment="student"><i></i><span><strong>Studium oder Ausbildung</strong><small>Ich starte oder plane meinen Berufseinstieg.</small></span></button>
-                <button type="button" data-employment="other"><i></i><span><strong>Etwas anderes</strong><small>Ich möchte es nicht genauer angeben.</small></span></button>
-              </div>
+              <span class="onboarding-count" data-i18n="aboutCount">02 — Über dich</span>
+              <h2 data-i18n="aboutTitle">Wer bist du?</h2>
+              <p data-i18n="aboutCopy">Ein bisschen Kontext reicht. Du kannst alles später noch ändern.</p>
+              <label class="onboarding-field">
+                <span data-i18n="nameQuestion">Wie dürfen wir dich nennen?</span>
+                <input id="onboardingName" type="text" maxlength="80" autocomplete="name" placeholder="Vorname oder Spitzname (optional)" data-i18n-placeholder="namePlaceholder">
+              </label>
+              <label class="onboarding-field">
+                <span data-i18n="roleQuestion">Welche Rolle suchst du?</span>
+                <input id="onboardingRole" type="text" maxlength="120" autocomplete="organization-title" placeholder="z. B. Product Designer (optional)" data-i18n-placeholder="rolePlaceholder">
+              </label>
             </div>
 
             <div class="onboarding-panel" data-onboarding-step="2" hidden>
-              <span class="onboarding-count">03 — Dein Ziel</span>
-              <h2>Wie viele Bewerbungen möchtest du versenden?</h2>
-              <p>Ein realistisches Monatsziel hilft dir, Fortschritt sichtbar zu machen.</p>
+              <span class="onboarding-count" data-i18n="situationCount">03 — Deine Situation</span>
+              <h2 data-i18n="situationTitle">Hast du aktuell einen Job?</h2>
+              <p data-i18n="situationCopy">So können wir deine Jobsuche passend zu deiner Situation einordnen.</p>
+              <div class="onboarding-options" id="employmentOptions">
+                <button type="button" data-employment="employed"><i></i><span><strong data-i18n="employed">Ja, ich bin angestellt</strong><small data-i18n="employedHint">Ich suche aus einer bestehenden Stelle heraus.</small></span></button>
+                <button type="button" data-employment="unemployed"><i></i><span><strong data-i18n="unemployed">Nein, aktuell nicht</strong><small data-i18n="unemployedHint">Meine Jobsuche hat gerade Priorität.</small></span></button>
+                <button type="button" data-employment="student"><i></i><span><strong data-i18n="student">Studium oder Ausbildung</strong><small data-i18n="studentHint">Ich starte oder plane meinen Berufseinstieg.</small></span></button>
+                <button type="button" data-employment="other"><i></i><span><strong data-i18n="other">Etwas anderes</strong><small data-i18n="otherHint">Ich möchte es nicht genauer angeben.</small></span></button>
+              </div>
+            </div>
+
+            <div class="onboarding-panel" data-onboarding-step="3" hidden>
+              <span class="onboarding-count" data-i18n="goalCount">04 — Dein Ziel</span>
+              <h2 data-i18n="goalTitle">Wie viele Bewerbungen möchtest du versenden?</h2>
+              <p data-i18n="goalCopy">Ein realistisches Monatsziel hilft dir, Fortschritt sichtbar zu machen.</p>
               <div class="onboarding-goal">
                 <output id="onboardingGoalOutput" for="onboardingGoal" aria-live="polite"><strong>10</strong><span>Bewerbungen pro Monat</span></output>
                 <input id="onboardingGoal" type="range" min="1" max="50" step="1" value="10" aria-label="Bewerbungen pro Monat">
@@ -230,16 +246,16 @@
               </div>
             </div>
 
-            <div class="onboarding-panel" data-onboarding-step="3" hidden>
-              <span class="onboarding-count">04 — Optional</span>
-              <h2>Bereit für dein nächstes Gespräch?</h2>
-              <p>Mit deinem Lebenslauf erstellt Jobply später passendere Fragen und ehrliche Antwortvorschläge.</p>
+            <div class="onboarding-panel" data-onboarding-step="4" hidden>
+              <span class="onboarding-count" data-i18n="optionalCount">05 — Optional</span>
+              <h2 data-i18n="cvTitle">Bereit für dein nächstes Gespräch?</h2>
+              <p data-i18n="cvCopy">Mit deinem Lebenslauf erstellt Jobply später passendere Fragen und ehrliche Antwortvorschläge.</p>
               <label class="cv-upload-card" for="onboardingCv">
                 <span class="cv-upload-icon"><svg viewBox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5"/><path d="M5 20h14a2 2 0 0 0 2-2v-3M3 15v3a2 2 0 0 0 2 2"/></svg></span>
-                <span><strong id="onboardingCvLabel">Lebenslauf auswählen</strong><small>PDF oder DOCX · maximal 10 MB</small></span>
+                <span><strong id="onboardingCvLabel" data-i18n="selectCv">Lebenslauf auswählen</strong><small data-i18n="cvLimit">PDF oder DOCX · maximal 10 MB</small></span>
                 <input id="onboardingCv" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
               </label>
-              <p class="cv-privacy-note">Privat gespeichert. An die KI wird dein Lebenslauf erst gesendet, wenn du es in den Einstellungen unter „Datenschutz &amp; KI“ ausdrücklich erlaubst.</p>
+              <p class="cv-privacy-note" data-i18n="cvPrivacy">Privat gespeichert. An die KI wird dein Lebenslauf erst mit deiner ausdrücklichen Freigabe gesendet.</p>
             </div>
 
             <label class="auth-consent onboarding-consent" id="onboardingConsent" hidden>
@@ -249,10 +265,10 @@
             <p class="onboarding-message" id="onboardingMessage" role="status"></p>
             <footer class="onboarding-actions">
               <button class="onboarding-back" id="onboardingBack" type="button" hidden>
-                <svg viewBox="0 0 24 24"><path d="M19 12H5m5 5-5-5 5-5"/></svg>Zurück
+                <svg viewBox="0 0 24 24"><path d="M19 12H5m5 5-5-5 5-5"/></svg><span data-i18n="back">Zurück</span>
               </button>
               <button class="onboarding-next" id="onboardingNext" type="button">
-                <span>Weiter</span><svg viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+                <span data-i18n="next">Weiter</span><svg viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
               </button>
             </footer>
           </form>
@@ -292,27 +308,27 @@
     <section class="dashboard-heading">
       <div>
         <span class="dashboard-kicker" id="dashboardKicker">Dashboard</span>
-        <h1 id="dashboardTitle">Deine Bewerbungen</h1>
-        <p id="subtitle">Alles an einem Ort – vom ersten Versand bis zum Angebot.</p>
+        <h1 id="dashboardTitle" data-i18n="dashboardTitle">Deine Bewerbungen</h1>
+        <p id="subtitle" data-i18n="dashboardSubtitle">Alles an einem Ort – vom ersten Versand bis zum Angebot.</p>
       </div>
       <button class="btn primary dashboard-add" id="addBtn">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-        <span>Neue Bewerbung</span>
+        <span data-i18n="addApplication">Neue Bewerbung</span>
       </button>
     </section>
 
     <nav class="workspace-switch" id="workspaceSwitch" aria-label="Arbeitsbereich">
       <button type="button" data-workspace-view="list" class="active" aria-pressed="true" aria-current="page">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="15" rx="3"/><path d="M8 5V3h8v2M3 10h18"/></svg>
-        <span>Bewerbungen</span>
+        <span data-i18n="applications">Bewerbungen</span>
       </button>
       <button type="button" data-workspace-view="interviews" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="3"/><path d="M8 2v4m8-4v4M3 9h18M8 14h3m2 0h3"/></svg>
-        <span>Gespräche</span>
+        <span data-i18n="interviews">Gespräche</span>
       </button>
       <button type="button" data-workspace-view="insights" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2"/></svg>
-        <span>Statistiken</span>
+        <span data-i18n="statistics">Statistiken</span>
       </button>
     </nav>
 
@@ -328,7 +344,7 @@
     <section class="toolbar">
       <div class="search">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-        <input id="search" type="search" placeholder="Firma, Stelle oder Notiz suchen…" autocomplete="off">
+        <input id="search" type="search" placeholder="Firma, Stelle oder Notiz suchen…" data-i18n-placeholder="search" autocomplete="off">
         <kbd>/</kbd>
       </div>
       <div class="filters" id="filters" role="tablist"></div>
@@ -390,8 +406,8 @@
   <aside class="settings-panel" id="settingsPanel" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="settingsTitle">
     <div class="settings-head">
       <div>
-        <span class="settings-kicker">Dein Workspace</span>
-        <h2 id="settingsTitle">Einstellungen</h2>
+        <span class="settings-kicker" data-i18n="workspace">Dein Workspace</span>
+        <h2 id="settingsTitle" data-i18n="settings">Einstellungen</h2>
       </div>
       <button type="button" class="icon-btn" id="settingsCloseBtn" aria-label="Einstellungen schließen">
         <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -413,6 +429,7 @@
             <label class="field"><span>Zielrolle</span><input id="settingsRole" maxlength="120" placeholder="z.B. Product Designer"></label>
             <label class="field"><span>Aktueller Status</span><select id="settingsEmployment" class="select"><option value="">Keine Angabe</option><option value="employed">Angestellt</option><option value="unemployed">Arbeitssuchend</option><option value="student">In Ausbildung</option><option value="other">Etwas anderes</option></select></label>
             <label class="field"><span>Monatsziel</span><input id="settingsGoal" type="number" min="1" max="50" inputmode="numeric"></label>
+            <label class="field"><span data-i18n="languageSetting">Sprache</span><select id="settingsLanguage" class="select"><option value="de">Deutsch</option><option value="en">English</option><option value="fr">Français</option><option value="es">Español</option><option value="sv">Svenska</option></select><small class="field-help" data-i18n="languageSettingHint">Darstellung der App</small></label>
           </div>
           <div class="settings-form-foot"><span id="settingsAccountMessage" role="status"></span><button class="btn primary" id="saveAccountSettingsBtn" type="submit">Änderungen speichern</button></div>
         </form>
@@ -430,6 +447,7 @@
           <button type="button" id="settingsBackupBtn"><span class="settings-action-icon"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2"/></svg></span><span><strong>JSON-Backup speichern</strong><small>Vollständige Sicherung herunterladen</small></span><i>→</i></button>
           <button type="button" id="settingsImportBtn"><span class="settings-action-icon"><svg viewBox="0 0 24 24"><path d="M12 21V9M7 14l5-5 5 5"/><path d="M5 3h14a2 2 0 0 1 2 2v3M3 8V5a2 2 0 0 1 2-2"/></svg></span><span><strong>Backup importieren</strong><small>CSV oder JSON sicher einlesen</small></span><i>→</i></button>
           <button type="button" id="settingsCsvBtn"><span class="settings-action-icon"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v4h4M9 12h6M9 16h6"/></svg></span><span><strong>CSV exportieren</strong><small>Für Excel oder deine Ablage</small></span><i>→</i></button>
+          <button type="button" id="settingsStatusCardBtn"><span class="settings-action-icon status-card-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M8 15V9m4 6V7m4 8v-3"/></svg></span><span><strong data-i18n="totalCard">Gesamtübersicht als Karte</strong><small data-i18n="totalCardHint">Deinen kompletten Bewerbungsstand als schönes PNG exportieren</small></span><i>→</i></button>
         </div>
       </section>
 
@@ -443,6 +461,10 @@
           <label class="settings-consent">
             <input id="aiCvConsentInput" type="checkbox">
             <span><strong>Lebenslauf für KI-Vorbereitung verwenden</strong><small>Dein CV wird nur bei einer angeforderten Vorbereitung an OpenAI gesendet. Ohne Freigabe bleibt er ausschliesslich in deinem privaten Speicher.</small></span>
+          </label>
+          <label class="settings-consent">
+            <input id="analyticsConsentInput" type="checkbox">
+            <span><strong>Optionale Nutzungsanalyse erlauben</strong><small>Hilft uns, monatlich aktive Nutzer zu zählen. PostHog erhält nur eine pseudonyme Konto-ID und das Ereignis „App geöffnet“ – keine E-Mail, Bewerbungen oder Lebenslaufdaten. Automatisches Klick-Tracking und Sitzungsaufzeichnungen sind aus.</small></span>
           </label>
           <span class="settings-consent-message" id="consentMessage" role="status"></span>
         </div>
@@ -873,12 +895,27 @@
     <a href="impressum.html">Impressum</a>
   </footer>
 
+  <section class="analytics-consent" id="analyticsConsent" role="dialog" aria-modal="false" aria-labelledby="analyticsConsentTitle" hidden>
+    <div class="analytics-consent-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-7"/><path d="M3 19h18"/></svg>
+    </div>
+    <div class="analytics-consent-copy">
+      <strong id="analyticsConsentTitle" data-i18n="analyticsTitle">Hilfst du uns, Jobply besser zu machen?</strong>
+      <p data-i18n="analyticsCopy">Mit deiner Erlaubnis zählen wir über PostHog nur, wie viele Nutzer Jobply monatlich aktiv verwenden. Keine Werbeprofile, keine Sitzungsaufzeichnung und keine Bewerbungsinhalte. Ohne Zustimmung wird PostHog nicht geladen.</p>
+      <a href="datenschutz.html#nutzungsanalyse" target="_blank" rel="noopener" data-i18n="analyticsPrivacy">Mehr zum Datenschutz</a>
+    </div>
+    <div class="analytics-consent-actions">
+      <button type="button" class="btn ghost" id="analyticsRejectBtn" data-i18n="analyticsReject">Nicht erlauben</button>
+      <button type="button" class="btn primary" id="analyticsAcceptBtn" data-i18n="analyticsAccept">Analyse erlauben</button>
+    </div>
+  </section>
+
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <input type="file" id="fileInput" accept=".csv,.json,text/csv,application/json" hidden>
 
   <script src="vendor/supabase-2.102.0.min.js"
     integrity="sha384-1qxdq7qui0E5OGQx7KlSCCpPydLIt8lgUjqM3jGxWLXq9AIGC661VIvU/NPT6BQP"></script>
-  <script src="app.js?v=20261104-8"></script>
+  <script src="app.js?v=20261104-11"></script>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=jobplyTurnstileReady&amp;render=explicit" async defer></script>
 </body>
 </html>
